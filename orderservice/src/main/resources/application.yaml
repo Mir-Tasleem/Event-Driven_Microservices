@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  application:
+    name: "orderservice"
+  kafka:
+    bootstrap-servers: localhost:9092   # Kafka broker address
+    consumer:
+      properties:
+        enable.auto.commit: false
+      group-id: order-svc        # Consumers in same group share work
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      properties:
+        acks: all
+        enable.idempotence: true
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      ack-mode: MANUAL
+
