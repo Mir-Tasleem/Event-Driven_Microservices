@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: "notificationservice"
+  datasource:
+    url: jdbc:postgresql://localhost:5433/notification_db
+    username: order_user
+    password: order_pass

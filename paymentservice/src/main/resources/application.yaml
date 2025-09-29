@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: "paymentservice"
+  datasource:
+    url: jdbc:postgresql://localhost:5433/payment_db
+    username: payment_user
+    password: payment_pass

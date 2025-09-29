@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: "inventoryservice"
+  datasource:
+    url: jdbc:postgresql://localhost:5433/inventory_db
+    username: order_user
+    password: order_pass

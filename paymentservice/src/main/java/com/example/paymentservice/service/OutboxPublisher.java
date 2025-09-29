@@ -1,9 +1,9 @@
-package com.example.orderservice.service;
+package com.example.paymentservice.service;
 
-import com.example.orderservice.config.KafkaConfigLoader;
-import com.example.orderservice.model.Outbox;
-import com.example.orderservice.repository.OutboxRepository;
-import com.example.orderservice.repository.ProcessedEventRepository;
+import com.example.inventoryservice.config.KafkaConfigLoader;
+import com.example.inventoryservice.model.Outbox;
+import com.example.inventoryservice.repository.OutboxRepository;
+import com.example.inventoryservice.repository.ProcessedEventRepository;
 import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -33,10 +33,10 @@ public class OutboxPublisher {
 
         for(Outbox event : events) {
             ProducerRecord<String, String> rec = new ProducerRecord<>(event.getType(), event.getPayload());
-            rec.headers().add("eventId",UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
+            rec.headers().add("eventId", UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
             rec.headers().add("correlationId",event.getAggregateId().toString().getBytes(StandardCharsets.UTF_8));
             rec.headers().add("eventType",event.getType().getBytes(StandardCharsets.UTF_8));
-            rec.headers().add("occurredAt",Instant.now().toString().getBytes(StandardCharsets.UTF_8));
+            rec.headers().add("occurredAt", Instant.now().toString().getBytes(StandardCharsets.UTF_8));
             kafkaProducer.send(rec,((metadata, exception) -> {
                 if(exception != null){
                     System.out.println(exception.getMessage());
@@ -46,7 +46,8 @@ public class OutboxPublisher {
             }));
             event.setStatus("SENT");
             outboxRepository.save(event);
-            kafkaProducer.flush();
         }
+        kafkaProducer.flush();
+        kafkaProducer.close();
     }
 }

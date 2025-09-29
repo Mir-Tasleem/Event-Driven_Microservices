@@ -20,6 +20,16 @@ public class Reservation {
 
     private String status;
 
+    public Reservation(){};
+
+    public Reservation(UUID order_id, String sku, Long quantity) {
+        this.id = UUID.randomUUID();
+        this.order_id = order_id;
+        this.sku = sku;
+        this.quantity = quantity;
+        this.status = "InventoryReserved";
+    }
+
     public UUID getId() {
         return id;
     }

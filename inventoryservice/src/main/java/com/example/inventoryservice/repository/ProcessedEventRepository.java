@@ -8,4 +8,5 @@ import java.util.UUID;
 
 @Repository
 public interface ProcessedEventRepository extends JpaRepository<ProcessedEvent, UUID> {
+    boolean findByEventId(UUID orderId);
 }
