@@ -37,11 +37,19 @@ public class KafkaConfigLoader {
     public static Properties getConsumerProperties() {
         Properties allProps = load("kafka-config.properties");
         Properties consumerProps = extractProperties(allProps, "consumer");
+        
         // Add common properties
         String bootstrapServers = allProps.getProperty("bootstrap.servers");
         if (bootstrapServers != null) {
             consumerProps.put("bootstrap.servers", bootstrapServers);
         }
+        
+        // Add value type configuration for JsonDeserializer
+        String valueType = allProps.getProperty("consumer.json.value.type");
+        if (valueType != null) {
+            consumerProps.put("value.deserializer.class", valueType);
+        }
+        
         return consumerProps;
     }
 

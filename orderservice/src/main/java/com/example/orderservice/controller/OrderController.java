@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -17,17 +19,21 @@ public class OrderController {
     @Autowired
     private OrderService orderService;
     @PostMapping("/orders")
-    public ResponseEntity<OrderResponse> createOrder(@RequestBody OrderRequest orderRequest,@RequestHeader("Idempotency-Key") String idempotencyKey) {
+    public ResponseEntity<Map<String, String>> createOrder(@RequestBody OrderRequest orderRequest) {
+        UUID orderId;
         OrderResponse orderResponse=new OrderResponse();
         try{
-            orderService.createOrder(orderRequest,idempotencyKey);
+            orderId=orderService.createOrder(orderRequest);
         } catch (JsonProcessingException e) {
-            return new ResponseEntity<>(orderResponse, HttpStatus.INTERNAL_SERVER_ERROR);
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
         }
-        return ResponseEntity.ok(orderResponse);
+        Map<String, String> response=new HashMap<>();
+        response.put("orderId", orderId.toString());
+        response.put("status", "Pending");
+        return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/orders/{id}")
     public ResponseEntity<OrderResponse> getOrderById(@PathVariable UUID id) {
         OrderResponse orderResponse = orderService.getOrderById(id);
         return ResponseEntity.ok(orderResponse);

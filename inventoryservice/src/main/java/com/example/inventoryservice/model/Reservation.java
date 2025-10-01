@@ -12,7 +12,7 @@ public class Reservation {
     @Id
     private UUID id;
 
-    private UUID order_id;
+    private UUID orderId;
 
     private String sku;
 
@@ -22,9 +22,9 @@ public class Reservation {
 
     public Reservation(){};
 
-    public Reservation(UUID order_id, String sku, Long quantity) {
+    public Reservation(UUID orderId, String sku, Long quantity) {
         this.id = UUID.randomUUID();
-        this.order_id = order_id;
+        this.orderId=orderId;
         this.sku = sku;
         this.quantity = quantity;
         this.status = "InventoryReserved";
@@ -38,12 +38,12 @@ public class Reservation {
         this.id = id;
     }
 
-    public UUID getOrder_id() {
-        return order_id;
+    public UUID getOrderId() {
+        return orderId;
     }
 
-    public void setOrder_id(UUID order_id) {
-        this.order_id = order_id;
+    public void setOrder_id(UUID orderId) {
+        this.orderId = orderId;
     }
 
     public String getSku() {

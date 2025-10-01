@@ -1,5 +1,6 @@
 package com.example.orderservice.model;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.data.annotation.CreatedDate;
@@ -22,15 +23,11 @@ public class Order {
     @NotNull
     private double totalAmount;
 
-
-
-    @Column(unique = true)
-    private String idempotencyKey;
-
     @CreatedDate
     private LocalDateTime createdAt;
 
     @OneToMany(mappedBy = "order",cascade = CascadeType.ALL)
+    @JsonManagedReference
     List<OrderItem> orderItems=new ArrayList<>();
 
     public UUID getId() {
@@ -79,13 +76,5 @@ public class Order {
 
     public void setOrderItems(List<OrderItem> orderItems) {
         this.orderItems = orderItems;
-    }
-
-    public String getIdempotencyKey() {
-        return idempotencyKey;
-    }
-
-    public void setIdempotencyKey(String idempotencyKey) {
-        this.idempotencyKey = idempotencyKey;
     }
 }

@@ -26,20 +26,27 @@ import java.util.UUID;
 
 @Service
 public class EventListner {
-    @Autowired
     private KafkaConfigLoader configLoader;
 
-    @Autowired
     private OrderRepository orderRepository;
 
-    @Autowired
     private OutboxRepository outboxRepository;
 
-    @Autowired
     private ProcessedEventRepository processedEventRepository;
-    private ObjectMapper objectMapper=new ObjectMapper();
 
-    KafkaConsumer<String, String> consumer=new KafkaConsumer<>(configLoader.getConsumerProperties());
+    private ObjectMapper objectMapper;
+
+    private KafkaConsumer<String, String> consumer;
+
+    @Autowired
+    public EventListner(ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository, OrderRepository orderRepository, KafkaConfigLoader configLoader){
+        this.processedEventRepository=processedEventRepository;
+        this.outboxRepository=outboxRepository;
+        this.orderRepository=orderRepository;
+        this.configLoader = configLoader;
+        this.objectMapper=new ObjectMapper();
+        this.consumer=new KafkaConsumer<>(configLoader.getConsumerProperties());
+    }
 
     public void handle() throws JsonProcessingException {
         consumer.subscribe(List.of("inventory.reserved","inventory.rejected","payment.authroized","payment.rejected"));

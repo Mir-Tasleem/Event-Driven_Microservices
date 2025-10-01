@@ -1,7 +1,10 @@
 package com.example.orderservice.model;
 
+import io.hypersistence.utils.hibernate.type.json.JsonBinaryType;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import org.hibernate.annotations.Type;
 import org.springframework.data.annotation.CreatedDate;
 
 import java.time.LocalDateTime;
@@ -16,7 +19,9 @@ public class Outbox {
 
     private String type;
 
-    private String payload;
+    @Type(value = JsonBinaryType.class)
+    @Column(columnDefinition = "jsonb")
+    private Order payload;
 
     private String status;
 
@@ -47,11 +52,11 @@ public class Outbox {
         this.type = type;
     }
 
-    public String getPayload() {
+    public Order getPayload() {
         return payload;
     }
 
-    public void setPayload(String payload) {
+    public void setPayload(Order payload) {
         this.payload = payload;
     }
 

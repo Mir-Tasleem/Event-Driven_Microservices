@@ -1,5 +1,6 @@
 package com.example.orderservice.model;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 
 import java.util.UUID;
@@ -8,8 +9,6 @@ import java.util.UUID;
 @Table(name="order_items")
 public class OrderItem {
     @Id
-    private UUID orderId;
-
     private String sku;
 
     private int quantity;
@@ -18,22 +17,18 @@ public class OrderItem {
 
     @ManyToOne
     @JoinColumn(name = "order_id", referencedColumnName = "id")
+    @JsonBackReference
     private Order order;
 
+    public OrderItem() {}
+
+
     public OrderItem(String sku, int quantity, double price) {
-        this.orderId=UUID.randomUUID();
         this.sku=sku;
         this.quantity=quantity;
         this.price=price;
     }
 
-    public UUID getOrderId() {
-        return orderId;
-    }
-
-    public void setOrderId(UUID orderId) {
-        this.orderId = orderId;
-    }
 
     public String getSku() {
         return sku;

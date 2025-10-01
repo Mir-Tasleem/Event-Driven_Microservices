@@ -10,34 +10,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-@Entity
-@Table(name="orders")
 public class OrderCreated {
-    @Id
     private UUID id;
 
     private UUID customerId;
 
     private String status;
 
-    @NotNull
     private double totalAmount;
 
-
-
-    @Column(unique = true)
-    private String idempotencyKey;
-
-    @CreatedDate
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "order",cascade = CascadeType.ALL)
     List<InventoryOrderItem> orderItems=new ArrayList<>();
 
     public UUID getId() {
         return id;
     }
 
+    public  OrderCreated(){}
     public void setId(UUID id) {
         this.id = id;
     }
@@ -82,11 +72,4 @@ public class OrderCreated {
         this.orderItems = orderItems;
     }
 
-    public String getIdempotencyKey() {
-        return idempotencyKey;
-    }
-
-    public void setIdempotencyKey(String idempotencyKey) {
-        this.idempotencyKey = idempotencyKey;
-    }
 }

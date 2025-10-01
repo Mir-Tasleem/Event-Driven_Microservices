@@ -1,7 +1,10 @@
 package com.example.inventoryservice.dto;
 
+import org.springframework.stereotype.Component;
+
 import java.util.UUID;
 
+@Component
 public class InventoryOrderItem {
     private UUID orderId;
 
@@ -9,8 +12,7 @@ public class InventoryOrderItem {
 
     private Long quantity;
 
-    private double price;
-
+    public InventoryOrderItem() {}
 
     public UUID getOrderId() {
         return orderId;
@@ -35,14 +37,5 @@ public class InventoryOrderItem {
     public void setQuantity(Long quantity) {
         this.quantity = quantity;
     }
-
-    public double getPrice() {
-        return price;
-    }
-
-    public void setPrice(double price) {
-        this.price = price;
-    }
-
 
 }

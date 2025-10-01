@@ -12,5 +12,4 @@ public interface OutboxRepository extends JpaRepository<Outbox, UUID> {
 
     List<Outbox> findTop5ByStatus(String inventoryReserved);
 
-    List<Outbox> findTop5();
 }

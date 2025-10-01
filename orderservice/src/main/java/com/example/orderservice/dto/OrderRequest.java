@@ -3,6 +3,7 @@ package com.example.orderservice.dto;
 import com.example.orderservice.model.OrderItem;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -10,7 +11,7 @@ import java.util.UUID;
 public class OrderRequest {
     private UUID customerId;
 
-    private List<OrderItem> orderItems;
+    private List<OrderItemDTO> items;
 
     public UUID getCustomerId() {
         return customerId;
@@ -20,11 +21,23 @@ public class OrderRequest {
         this.customerId = customerId;
     }
 
-    public List<OrderItem> getOrderItems() {
-        return orderItems;
+    public List<OrderItemDTO> getItems() {
+        return items;
     }
 
-    public void setOrderItems(List<OrderItem> orderItems) {
-        this.orderItems = orderItems;
+    public void setItems(List<OrderItemDTO> items) {
+        if (items != null) {
+            this.items = new ArrayList<>(items);
+        } else {
+            this.items = new ArrayList<>();
+        }
+    }
+
+    @Override
+    public String toString() {
+        return "OrderRequest{" +
+                "customerId=" + customerId +
+                ", items=" + items +
+                '}';
     }
 }

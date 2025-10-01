@@ -1,10 +1,10 @@
-CREATE TABLE IF NOT EXIXTS orders(
+CREATE TABLE IF NOT EXISTS orders(
     id UUID PRIMARY KEY,
     customer_id UUID,
     status VARCHAR(255),
     total_amount DECIMAL(10,2),
     idempotency_key VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS order_items(
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS order_items(
     sku VARCHAR(255),
     quantity INT,
     price DECIMAL(10,2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS outbox(

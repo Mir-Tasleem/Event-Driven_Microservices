@@ -13,42 +13,62 @@ import com.example.inventoryservice.repository.ReservationRepository;
 import com.example.inventoryservice.repository.StockRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 
 @Service
 public class InventoryService {
-    @Autowired
+    private volatile boolean initialized = false;
+    private final Object initLock = new Object();
     private StockRepository stockRepository;
-
-    @Autowired
     private KafkaConfigLoader configLoader;
-
-    @Autowired
     private ReservationRepository reservationRepository;
-
-    @Autowired
     private OutboxRepository outboxRepository;
-
-    @Autowired
     private ProcessedEventRepository processedEventRepository;
+    private KafkaConsumer<String, String> kafkaConsumer;
 
-    private KafkaConsumer<String, String> kafkaConsumer=new KafkaConsumer<>(configLoader.getConsumerProperties());
 
     ObjectMapper objectMapper = new ObjectMapper();
+
+    public InventoryService(StockRepository stockRepository, KafkaConfigLoader configLoader, ReservationRepository reservationRepository, OutboxRepository outboxRepository, ProcessedEventRepository processedEventRepository){
+        this.stockRepository=stockRepository;
+        this.reservationRepository=reservationRepository;
+        this.outboxRepository=outboxRepository;
+        this.processedEventRepository=processedEventRepository;
+        Properties props=configLoader.getConsumerProperties();
+        props.put("consumer.json.value.type.map", "OrderCreated=com.example.inventoryservice.dto.OrderCreated,PaymentFailed=com.example.inventoryservice.dto.PaymentFailedEvent");
+        this.kafkaConsumer=new KafkaConsumer<>(props);
+    }
+
+
+    @PostConstruct
+    public void startConsumerThread() {
+        Thread thread = new Thread(() -> {
+            try {
+                processOrder();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+        thread.setDaemon(true);
+        thread.start();
+    }
 
 
 
@@ -76,6 +96,11 @@ public class InventoryService {
     }
 
     private void handleOrder(ConsumerRecord<String, String> record) throws JsonProcessingException {
+        System.out.println("📥 Consumed record from topic " + record.topic() +
+                ", partition " + record.partition() +
+                ", offset " + record.offset() +
+                ", key=" + record.key() +
+                ", value=" + record.value());
         String jsonPayload = record.value();
         Headers headers = record.headers();
 
@@ -119,7 +144,6 @@ public class InventoryService {
         for(InventoryOrderItem item: order.getOrderItems()){
             Stock stock = stockRepository.findBySku(item.getSku());
             Long availableQuantity = stock.getAvailable();
-            String result;
             if(item.getQuantity()>=availableQuantity){
                return false;
             }else{
@@ -132,16 +156,45 @@ public class InventoryService {
         return true;
     }
 
+    private void initializeTransactions(KafkaProducer<String, String> producer) {
+        if (!initialized) {
+            synchronized (initLock) {
+                if (!initialized) {
+                    try {
+                        producer.initTransactions();
+                        initialized = true;
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to initialize transactions", e);
+                    }
+                }
+            }
+        }
+    }
     /**
      * Sends a record to the dead letter queue with an error header set to the message of the given exception.
      * @param record the record to send to the dead letter queue
      * @param e the exception to set as the error header
      */
     private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
-        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(configLoader.getProducerProperties());
-        ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", record.value());
-        rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
-        dlqProducer.send(rec);
+        Properties dlqprops=configLoader.getProducerProperties();
+        dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"inventory-dlq-tx");
+        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
+        initializeTransactions(dlqProducer);
+        try {
+            dlqProducer.beginTransaction();
+            ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", record.value());
+            rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
+            dlqProducer.send(rec).get();
+            dlqProducer.commitTransaction();
+        }catch (Exception ex){
+            try {
+                dlqProducer.abortTransaction();
+            } catch (Exception abortEx) {
+                System.err.println("Failed to abort transaction: " + abortEx.getMessage());
+            }
+            System.err.println("Failed to send to DLQ: " + ex.getMessage());
+        }
+        dlqProducer.close();
     }
 
 }

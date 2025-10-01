@@ -1,5 +1,6 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.dto.OrderItemDTO;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
 import com.example.orderservice.model.Order;
@@ -13,6 +14,7 @@ import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,23 +25,15 @@ public class OrderService {
     private OutboxRepository outboxRepository;
     private ObjectMapper objectMapper;
 
-//    private KafkaTemplate<String, String> kafkaTemplate;
-
-    public OrderService(OrderRepository orderRepository, OutboxRepository outboxRepository) {
+    public OrderService(OrderRepository orderRepository, OutboxRepository outboxRepository, ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
-    public UUID createOrder(OrderRequest orderRequest, String idempotencyKey) throws JsonProcessingException {
-        //check idempotency
-        Optional<Order> existing=orderRepository.findByIdempotentKey(idempotencyKey);
-        if(existing.isPresent()){
-            return existing.get().getId();
-        }
-
-        idempotencyKey=UUID.randomUUID().toString();
-
+    public UUID createOrder(OrderRequest orderRequest) throws JsonProcessingException {
+        List<OrderItem> items=new ArrayList<>();
         UUID id=UUID.randomUUID();
 
         //create order
@@ -47,13 +41,18 @@ public class OrderService {
         order.setId(id);
         order.setCustomerId(orderRequest.getCustomerId());
         order.setStatus("PENDING");
-        order.setIdempotencyKey(idempotencyKey);
-        order.setTotalAmount(calculateTotalAmount(orderRequest.getOrderItems()));
         order.setCreatedAt(LocalDateTime.now());
-        orderRequest.getOrderItems().forEach(orderItem -> {
-            order.getOrderItems().add(new OrderItem(orderItem.getSku(),orderItem.getQuantity(),orderItem.getPrice()));
+        System.out.println(orderRequest);
+        orderRequest.getItems().forEach(orderItem -> {
+            OrderItem item=new OrderItem(orderItem.getSku(),orderItem.getQty(),orderItem.getPrice());
+            item.setOrder(order);
+            items.add(item);
         });
+        order.setOrderItems(items);
+        System.out.println(items);
+        order.setTotalAmount(calculateTotalAmount(orderRequest.getItems()));
         orderRepository.save(order);
+
 
         //create outbox event
         Outbox outbox=new Outbox();
@@ -61,16 +60,16 @@ public class OrderService {
         outbox.setAggregateId(order.getId());
         outbox.setType("OrderCreated");
         outbox.setStatus("PENDING");
-        outbox.setPayload(objectMapper.writeValueAsString(order));
+        outbox.setPayload(order);
         outbox.setCreatedAt(LocalDateTime.now());
         outboxRepository.save(outbox);
 
         return order.getId();
     }
 
-    private double calculateTotalAmount(List<OrderItem> orderItems) {
+    private double calculateTotalAmount(List<OrderItemDTO> orderItems) {
         return orderItems.stream()
-                .mapToDouble(item->item.getPrice()*item.getQuantity())
+                .mapToDouble(item->item.getPrice()*item.getQty())
                 .sum();
     }
 

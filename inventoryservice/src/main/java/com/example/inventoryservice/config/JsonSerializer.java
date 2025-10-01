@@ -1,4 +1,4 @@
-package com.example.orderservice.config;
+package com.example.inventoryservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.common.serialization.Serializer;
