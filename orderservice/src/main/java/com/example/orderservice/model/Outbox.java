@@ -21,7 +21,7 @@ public class Outbox {
 
     @Type(value = JsonBinaryType.class)
     @Column(columnDefinition = "jsonb")
-    private Order payload;
+    private String payload;
 
     private String status;
 
@@ -52,11 +52,11 @@ public class Outbox {
         this.type = type;
     }
 
-    public Order getPayload() {
+    public String getPayload() {
         return payload;
     }
 
-    public void setPayload(Order payload) {
+    public void setPayload(String payload) {
         this.payload = payload;
     }
 

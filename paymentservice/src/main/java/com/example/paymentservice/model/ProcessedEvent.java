@@ -5,6 +5,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.LocalDateTime;
+import java.util.Properties;
 import java.util.UUID;
 
 @Entity
@@ -15,6 +16,7 @@ public class ProcessedEvent {
 
     private LocalDateTime recieivedAt;
 
+    public ProcessedEvent(){}
     public ProcessedEvent(UUID uuid) {
         this.eventId=uuid;
         this.recieivedAt=LocalDateTime.now();

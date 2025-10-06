@@ -1,18 +1,24 @@
 package com.example.orderservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.kafka.common.serialization.Serializer;
 
 import java.util.Map;
 
 public class JsonSerializer<T> implements Serializer<T> {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+
+    public JsonSerializer() {
+        objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule()); // handle Instant, LocalDate, etc.
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    }
 
     @Override
-    public void configure(Map<String, ?> configs, boolean isKey) {
-        // No config needed for now
-    }
+    public void configure(Map<String, ?> configs, boolean isKey) {}
 
     @Override
     public byte[] serialize(String topic, T data) {
@@ -25,7 +31,5 @@ public class JsonSerializer<T> implements Serializer<T> {
     }
 
     @Override
-    public void close() {
-        // Nothing to close
-    }
+    public void close() {}
 }

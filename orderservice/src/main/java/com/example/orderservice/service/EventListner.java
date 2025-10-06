@@ -9,6 +9,8 @@ import com.example.orderservice.repository.OutboxRepository;
 import com.example.orderservice.repository.ProcessedEventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -16,12 +18,16 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.UUID;
 
 @Service
@@ -45,11 +51,27 @@ public class EventListner {
         this.orderRepository=orderRepository;
         this.configLoader = configLoader;
         this.objectMapper=new ObjectMapper();
-        this.consumer=new KafkaConsumer<>(configLoader.getConsumerProperties());
+        Properties props=configLoader.getConsumerProperties();
+        this.consumer=new KafkaConsumer<>(props);
+        objectMapper.findAndRegisterModules();
+        objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void eventListenerThread() {
+        Thread thread = new Thread(() -> {
+            try {
+                handle();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+        thread.setDaemon(false);
+        thread.start();
     }
 
     public void handle() throws JsonProcessingException {
-        consumer.subscribe(List.of("inventory.reserved","inventory.rejected","payment.authroized","payment.rejected"));
+        consumer.subscribe(List.of("InventoryRejected","PaymentAuthorized","PaymentRejected"));
 
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
@@ -64,6 +86,7 @@ public class EventListner {
         }
     }
 
+    @Transactional
     private void handleEvent(ConsumerRecord<String, String> record) throws JsonProcessingException {
         String payload=record.value();
         String topic=record.topic();
@@ -77,19 +100,28 @@ public class EventListner {
             return;
         }
 
-       if(topic.equalsIgnoreCase("inventory.rejected") || topic.equalsIgnoreCase("payment.rejected")){
-           order.setStatus("REJECTED");
+       if(topic.equalsIgnoreCase("InventoryRejected") || topic.equalsIgnoreCase("PaymentRejected")){
+           order.setStatus("CANCELLED");
            Outbox outbox=new Outbox();
            outbox.setId(UUID.randomUUID());
            outbox.setAggregateId(order.getId());
+           outbox.setPayload(objectMapper.writeValueAsString(order));
            outbox.setType("OrderCancelled");
+           outbox.setStatus("PENDING");
+           outbox.setCreatedAt(LocalDateTime.now());
+           System.out.println("order canceled wit id:"+ orderId);
            outboxRepository.save(outbox);
-        }else if(topic.equalsIgnoreCase("payment.authroized")){
+        }else if(topic.equalsIgnoreCase("PaymentAuthorized")){
            order.setStatus("COMPLETED");
            Outbox outbox=new Outbox();
            outbox.setId(UUID.randomUUID());
            outbox.setAggregateId(order.getId());
            outbox.setType("OrderCompleted");
+           outbox.setPayload(objectMapper.writeValueAsString(order));
+           outbox.setStatus("PENDING");
+           outbox.setCreatedAt(LocalDateTime.now());
+           System.out.println("order complted wit id:"+ orderId);
+
            outboxRepository.save(outbox);
         }
 

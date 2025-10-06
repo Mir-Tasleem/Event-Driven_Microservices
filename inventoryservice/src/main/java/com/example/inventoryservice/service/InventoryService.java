@@ -13,7 +13,8 @@ import com.example.inventoryservice.repository.ReservationRepository;
 import com.example.inventoryservice.repository.StockRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -22,6 +23,8 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 
@@ -43,8 +46,7 @@ public class InventoryService {
     private ProcessedEventRepository processedEventRepository;
     private KafkaConsumer<String, String> kafkaConsumer;
 
-
-    ObjectMapper objectMapper = new ObjectMapper();
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     public InventoryService(StockRepository stockRepository, KafkaConfigLoader configLoader, ReservationRepository reservationRepository, OutboxRepository outboxRepository, ProcessedEventRepository processedEventRepository){
         this.stockRepository=stockRepository;
@@ -52,12 +54,14 @@ public class InventoryService {
         this.outboxRepository=outboxRepository;
         this.processedEventRepository=processedEventRepository;
         Properties props=configLoader.getConsumerProperties();
-        props.put("consumer.json.value.type.map", "OrderCreated=com.example.inventoryservice.dto.OrderCreated,PaymentFailed=com.example.inventoryservice.dto.PaymentFailedEvent");
+        props.put("consumer.json.value.type.map", "OrderCreated=com.example.inventoryservice.dto.OrderCreated");
         this.kafkaConsumer=new KafkaConsumer<>(props);
+        objectMapper.findAndRegisterModules();
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     public void startConsumerThread() {
         Thread thread = new Thread(() -> {
             try {
@@ -71,17 +75,7 @@ public class InventoryService {
     }
 
 
-
-    /**
-     * Processes orders from the "OrderCreated" topic. This method subscribes to the topic,
-     * polls for new records every 100 milliseconds, and processes each record by
-     * calling {@link #handleOrder(ConsumerRecord)}. If {@link #handleOrder(ConsumerRecord)}
-     * throws a {@link JsonProcessingException}, the method sends the record to the dead letter queue
-     * by calling {@link #sendToDLQ(ConsumerRecord, Exception)}.
-     *
-     * @throws JsonProcessingException if a record cannot be parsed into an {@link OrderCreated} object
-     */
-    public void processOrder() throws JsonProcessingException {
+    public void processOrder() {
         kafkaConsumer.subscribe(List.of("OrderCreated"));
         while (true){
             ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
@@ -95,25 +89,20 @@ public class InventoryService {
         }
     }
 
+    @Transactional
     private void handleOrder(ConsumerRecord<String, String> record) throws JsonProcessingException {
-        System.out.println("📥 Consumed record from topic " + record.topic() +
-                ", partition " + record.partition() +
-                ", offset " + record.offset() +
-                ", key=" + record.key() +
-                ", value=" + record.value());
-        String jsonPayload = record.value();
+        String jsonPayload=record.value();
         Headers headers = record.headers();
-
         OrderCreated order = objectMapper.readValue(jsonPayload, OrderCreated.class);
         UUID orderId = order.getId();
 
-        if(processedEventRepository.findByEventId(orderId)){
+        if(processedEventRepository.existsByEventId(orderId)){
             return;
         }
 
         //check if stock is available and reserve stock
         boolean reserved=reserveStock(order);
-        String status=reserved==true?"InventoryReserved":"InventoryFailed";
+        String status=reserved==true?"InventoryReserved":"InventoryRejected";
 
         //create Outbox Event
         Outbox outbox=new Outbox();
@@ -143,12 +132,12 @@ public class InventoryService {
     private boolean reserveStock(OrderCreated order){
         for(InventoryOrderItem item: order.getOrderItems()){
             Stock stock = stockRepository.findBySku(item.getSku());
-            Long availableQuantity = stock.getAvailable();
-            if(item.getQuantity()>=availableQuantity){
-               return false;
+            if( stock==null || item.getQuantity()>stock.getAvailable()){
+                return false;
             }else{
                 Reservation reservation = new Reservation(order.getId(),item.getSku(), item.getQuantity());
-                stock.setAvailable(availableQuantity-item.getQuantity());
+                stock.setAvailable(stock.getAvailable()-item.getQuantity());
+                stock.setReserved(stock.getReserved()+item.getQuantity());
                 stockRepository.save(stock);
                 reservationRepository.save(reservation);
             }
@@ -196,5 +185,4 @@ public class InventoryService {
         }
         dlqProducer.close();
     }
-
 }

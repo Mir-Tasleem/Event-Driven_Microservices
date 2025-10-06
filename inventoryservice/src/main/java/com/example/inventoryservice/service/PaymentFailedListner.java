@@ -67,7 +67,7 @@ public class PaymentFailedListner {
             PaymentFailedEvent event = mapper.readValue(json, PaymentFailedEvent.class);
 
             // idempotency check
-            if (processedEventRepository.findByEventId(event.getId())) return;
+            if (processedEventRepository.existsByEventId(event.getId())) return;
 
             // 1️⃣ find reservations for this order
             List<Reservation> reservations = reservationRepository.findByOrderId(event.getOrderId());

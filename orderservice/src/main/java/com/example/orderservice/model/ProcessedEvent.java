@@ -15,6 +15,7 @@ public class ProcessedEvent {
 
     private LocalDateTime recieivedAt;
 
+    public ProcessedEvent(){}
     public ProcessedEvent(UUID uuid) {
         this.eventId=uuid;
         this.recieivedAt=LocalDateTime.now();

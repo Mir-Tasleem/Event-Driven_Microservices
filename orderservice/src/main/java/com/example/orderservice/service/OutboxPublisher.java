@@ -5,6 +5,9 @@ import com.example.orderservice.model.Order;
 import com.example.orderservice.model.Outbox;
 import com.example.orderservice.repository.OutboxRepository;
 import com.example.orderservice.repository.ProcessedEventRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import jakarta.annotation.PreDestroy;
 import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -21,7 +24,7 @@ import java.util.UUID;
 @Service
 public class OutboxPublisher {
     private final OutboxRepository outboxRepository;
-    private final KafkaProducer<String, Order> kafkaProducer;
+    private final KafkaProducer<String, String> kafkaProducer;
     private volatile boolean initialized = false;
     private final Object initLock = new Object();
 
@@ -57,12 +60,11 @@ public class OutboxPublisher {
         kafkaProducer.beginTransaction();
         try{
             for(Outbox event : events) {
-                ProducerRecord<String, Order> rec = new ProducerRecord<>(event.getType(), event.getPayload());
+                ProducerRecord<String, String> rec = new ProducerRecord<>(event.getType(), event.getPayload());
                 rec.headers().add("eventId",UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
                 rec.headers().add("correlationId",event.getAggregateId().toString().getBytes(StandardCharsets.UTF_8));
                 rec.headers().add("eventType",event.getType().getBytes(StandardCharsets.UTF_8));
                 rec.headers().add("occurredAt",Instant.now().toString().getBytes(StandardCharsets.UTF_8));
-                System.out.println(rec);
                 kafkaProducer.send(rec,((metadata, exception) -> {
                     if(exception != null){
                         System.out.println(exception.getMessage());
@@ -70,14 +72,25 @@ public class OutboxPublisher {
                         System.out.println("Event sent successfully");
                     }
                 }));
+            }
+
+            for (Outbox event:events){
                 event.setStatus("SENT");
                 outboxRepository.save(event);
             }
             kafkaProducer.commitTransaction();
-            kafkaProducer.flush();
         }catch (Exception e){
             kafkaProducer.abortTransaction();
             System.out.println(e.getMessage());
+        }finally {
+            kafkaProducer.flush();
+        }
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (kafkaProducer != null) {
+            kafkaProducer.close();
         }
     }
 }

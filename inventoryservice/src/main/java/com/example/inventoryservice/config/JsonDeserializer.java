@@ -1,6 +1,7 @@
 package com.example.inventoryservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.kafka.common.serialization.Deserializer;
 
 import java.util.Map;
@@ -14,6 +15,7 @@ public class JsonDeserializer<T> implements Deserializer<T> {
     public JsonDeserializer() {
         objectMapper = new ObjectMapper();
         objectMapper.findAndRegisterModules();
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Override
@@ -28,8 +30,6 @@ public class JsonDeserializer<T> implements Deserializer<T> {
                     String className = parts[1].trim();
                     try {
                         Class<?> clazz = Class.forName(className);
-                        System.out.println("----------");
-                        System.out.println("Topic: " + topic + ", Target class: " + clazz);
                         topicClassMap.put(topic, clazz);
                     } catch (ClassNotFoundException e) {
                         throw new RuntimeException("Failed to load class for topic deserialization: " + className, e);

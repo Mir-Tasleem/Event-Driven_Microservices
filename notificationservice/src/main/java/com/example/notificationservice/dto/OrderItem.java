@@ -1,15 +1,15 @@
-package com.example.inventoryservice.dto;
+package com.example.notificationservice.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-public class InventoryOrderItem {
+public class OrderItem {
     private String sku;
     private double price;
     private long quantity;
 
     @JsonCreator
-    public InventoryOrderItem(
+    public OrderItem(
             @JsonProperty("sku") String sku,
             @JsonProperty("price") double price,
             @JsonProperty("quantity") long quantity

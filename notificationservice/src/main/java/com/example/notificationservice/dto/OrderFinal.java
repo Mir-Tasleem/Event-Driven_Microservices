@@ -1,99 +1,41 @@
 package com.example.notificationservice.dto;
 
-import jakarta.persistence.CascadeType;
-import jakarta.persistence.Column;
-import jakarta.persistence.OneToMany;
-import jakarta.validation.constraints.NotNull;
-import org.springframework.data.annotation.CreatedDate;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 public class OrderFinal {
     private UUID id;
-
-    private UUID customerId;
-
     private String status;
-
-    @NotNull
+    private LocalDateTime createdAt;
+    private UUID customerId;
+    private List<OrderItem> orderItems;
     private double totalAmount;
 
-
-    @Column(unique = true)
-    private String idempotencyKey;
-
-    @CreatedDate
-    private LocalDateTime createdAt;
-
-    List<String> orderItems=new ArrayList<>();
-
-    public UUID getId() {
-        return id;
-    }
-
-    public void setId(UUID id) {
+    @JsonCreator
+    public OrderFinal(
+            @JsonProperty("id") UUID id,
+            @JsonProperty("status") String status,
+            @JsonProperty("createdAt") LocalDateTime createdAt,
+            @JsonProperty("customerId") UUID customerId,
+            @JsonProperty("orderItems") List<OrderItem> orderItems,
+            @JsonProperty("totalAmount") double totalAmount
+    ) {
         this.id = id;
-    }
-
-    public UUID getCustomerId() {
-        return customerId;
-    }
-
-    public void setCustomerId(UUID customerId) {
-        this.customerId = customerId;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
         this.status = status;
-    }
-
-    public double getTotalAmount() {
-        return totalAmount;
-    }
-
-    public void setTotalAmount(double totalAmount) {
+        this.createdAt = createdAt;
+        this.customerId = customerId;
+        this.orderItems = orderItems;
         this.totalAmount = totalAmount;
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
-
-    public List<String> getOrderItems() {
-        return orderItems;
-    }
-
-    public void setOrderItems(List<String> orderItems) {
-        this.orderItems = orderItems;
-    }
-
-    public String getIdempotencyKey() {
-        return idempotencyKey;
-    }
-
-    public void setIdempotencyKey(String idempotencyKey) {
-        this.idempotencyKey = idempotencyKey;
-    }
-
-    @Override
-    public String toString() {
-        return "OrderFinal{" +
-                "customerId=" + customerId +
-                ", status='" + status + '\'' +
-                ", totalAmount=" + totalAmount +
-                ", createdAt=" + createdAt +
-                ", orderItems=" + orderItems +
-                '}';
-    }
+    public UUID getId() { return id; }
+    public String getStatus() { return status; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public UUID getCustomerId() { return customerId; }
+    public List<OrderItem> getOrderItems() { return orderItems; }
+    public double getTotalAmount() { return totalAmount; }
 }

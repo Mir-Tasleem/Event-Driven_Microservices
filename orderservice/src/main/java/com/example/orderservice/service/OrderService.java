@@ -10,6 +10,7 @@ import com.example.orderservice.repository.OrderRepository;
 import com.example.orderservice.repository.OutboxRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +29,8 @@ public class OrderService {
     public OrderService(OrderRepository orderRepository, OutboxRepository outboxRepository, ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
-        this.objectMapper = objectMapper;
+        this.objectMapper = objectMapper.findAndRegisterModules();
+        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Transactional
@@ -60,7 +62,7 @@ public class OrderService {
         outbox.setAggregateId(order.getId());
         outbox.setType("OrderCreated");
         outbox.setStatus("PENDING");
-        outbox.setPayload(order);
+        outbox.setPayload(objectMapper.writeValueAsString(order));
         outbox.setCreatedAt(LocalDateTime.now());
         outboxRepository.save(outbox);
 
