@@ -25,6 +25,7 @@ import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 
@@ -62,16 +63,13 @@ public class InventoryService {
 
 
     @EventListener(ApplicationReadyEvent.class)
+    @Async
     public void startConsumerThread() {
-        Thread thread = new Thread(() -> {
-            try {
-                processOrder();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        thread.setDaemon(true);
-        thread.start();
+        try {
+            processOrder();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
 
@@ -80,16 +78,32 @@ public class InventoryService {
         while (true){
             ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
             for (ConsumerRecord<String, String> record : records){
-                try{
-                    handleOrder(record);
-                } catch (JsonProcessingException e) {
-                    sendToDLQ(record, e);
-                }
+               int maxRetries=3;
+               int attempt=0;
+               long backoffMillis = 2000;
+               boolean success=false;
+               while(attempt<maxRetries && !success){
+                   try{
+                       handleOrder(record);
+                       success=true;
+                   }catch (Exception e){
+                       attempt++;
+                      if(attempt<maxRetries){
+                          try {
+                              Thread.sleep(backoffMillis);
+                          } catch (InterruptedException ie) {
+                              Thread.currentThread().interrupt();
+                          }
+                      }else{
+                          sendToDLQ(record, e);
+                      }
+                   }
+               }
             }
         }
     }
 
-    @Transactional
+    @Transactional(rollbackOn = Exception.class)
     private void handleOrder(ConsumerRecord<String, String> record) throws JsonProcessingException {
         String jsonPayload=record.value();
         Headers headers = record.headers();

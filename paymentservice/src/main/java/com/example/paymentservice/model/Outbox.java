@@ -1,7 +1,9 @@
 package com.example.paymentservice.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
 import org.springframework.data.annotation.CreatedDate;
 
 import java.time.LocalDateTime;
@@ -16,6 +18,8 @@ public class Outbox {
 
     private String type;
 
+    @Lob
+    @Column(columnDefinition = "TEXT")
     private String payload;
 
     private String status;
@@ -46,6 +50,7 @@ public class Outbox {
     public void setType(String type) {
         this.type = type;
     }
+
 
     public String getPayload() {
         return payload;

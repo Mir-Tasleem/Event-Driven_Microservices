@@ -49,7 +49,7 @@ public class OutboxPublisher {
     }
 
     @Scheduled(fixedRate = 5000)
-    @Transactional
+    @Transactional(rollbackOn = Exception.class)
     public void publishPending() {
 
         List<Outbox> events = outboxRepository.findTop5ByStatus("PENDING");

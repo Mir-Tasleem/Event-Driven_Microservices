@@ -12,16 +12,15 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
-import org.apache.kafka.common.protocol.types.Field;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.data.domain.Page;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -32,6 +31,8 @@ import java.util.UUID;
 
 @Service
 public class NotificationService {
+    private boolean initialized = false;
+    private final Object initLock = new Object();
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
     private NotificationRepository notificationRepository;
     private KafkaConfigLoader configLoader;
@@ -48,16 +49,13 @@ public class NotificationService {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Async
     public void startConsumerThread() {
-        Thread thread = new Thread(() -> {
-            try {
-                sendNotification();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        thread.setDaemon(false);
-        thread.start();
+        try {
+            sendNotification();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     public void sendNotification(){
@@ -65,11 +63,26 @@ public class NotificationService {
         while(true){
             ConsumerRecords<String, String> recs=kafkaConsumer.poll(Duration.ofMillis(100));
             for(ConsumerRecord<String, String> rec:recs) {
-                try {
-                    handle(rec);
-                    kafkaConsumer.commitAsync();
-                } catch (Exception e) {
-                    System.out.println(e.getMessage());
+                int maxRetries=3;
+                int attempt=0;
+                long backoffMillis = 2000;
+                boolean success=false;
+                while(attempt<maxRetries && !success){
+                    try{
+                        handle(rec);
+                        success=true;
+                    }catch (Exception e){
+                        attempt++;
+                        if(attempt<maxRetries){
+                            try {
+                                Thread.sleep(backoffMillis);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }else{
+                            sendToDLQ(rec, e);
+                        }
+                    }
                 }
             }
         }
@@ -96,5 +109,42 @@ public class NotificationService {
 
         String notificationMessage= "[Notification Sent] Your order with id:"+orderFinal.getId().toString()+" is "+topic;
         log.info(notificationMessage);
+    }
+
+    private void initializeTransactions(KafkaProducer<String, String> producer) {
+        if (!initialized) {
+            synchronized (initLock) {
+                if (!initialized) {
+                    try {
+                        producer.initTransactions();
+                        initialized = true;
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to initialize transactions", e);
+                    }
+                }
+            }
+        }
+    }
+
+    private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
+        Properties dlqprops=configLoader.getProducerProperties();
+        dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"notification-dlq-tx");
+        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
+        initializeTransactions(dlqProducer);
+        try {
+            dlqProducer.beginTransaction();
+            ProducerRecord<String, String> rec = new ProducerRecord<>("PaymentDLQ", record.value());
+            rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
+            dlqProducer.send(rec).get();
+            dlqProducer.commitTransaction();
+        }catch (Exception ex){
+            try {
+                dlqProducer.abortTransaction();
+            } catch (Exception abortEx) {
+                System.err.println("Failed to abort transaction: " + abortEx.getMessage());
+            }
+            System.err.println("Failed to send to DLQ: " + ex.getMessage());
+        }
+        dlqProducer.close();
     }
 }

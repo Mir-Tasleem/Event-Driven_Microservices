@@ -20,6 +20,7 @@ import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -58,16 +59,13 @@ public class EventListner {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Async
     public void eventListenerThread() {
-        Thread thread = new Thread(() -> {
-            try {
-                handle();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        thread.setDaemon(false);
-        thread.start();
+        try {
+            handle();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     public void handle() throws JsonProcessingException {
@@ -76,11 +74,26 @@ public class EventListner {
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
             for (ConsumerRecord<String, String> record : records) {
-                try {
-                    handleEvent(record);
-                    consumer.commitAsync();
-                } catch (JsonProcessingException e) {
-                    sendToDLQ(record, e);
+                int maxRetries=3;
+                int attempt=0;
+                long backoffMillis = 2000;
+                boolean success=false;
+                while(attempt<maxRetries && !success){
+                    try{
+                        handleEvent(record);
+                        success=true;
+                    }catch (Exception e){
+                        attempt++;
+                        if(attempt<maxRetries){
+                            try {
+                                Thread.sleep(backoffMillis);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }else{
+                            sendToDLQ(record, e);
+                        }
+                    }
                 }
             }
         }

@@ -15,71 +15,125 @@ import jakarta.annotation.PostConstruct;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.Executors;
+
 
 @Service
 public class PaymentFailedListner {
+    private boolean initialized = false;
+    private final Object initLock = new Object();
+    @Autowired
+    private ReservationRepository reservationRepository;
+    @Autowired
+    private StockRepository stockRepository;
+    @Autowired
+    private ProcessedEventRepository processedEventRepository;
+    @Autowired
+    private KafkaConfigLoader configLoader;
+    private final KafkaConsumer<String, String> consumer;
 
-    @Service
-    public class PaymentFailureHandler {
+    private final ObjectMapper mapper = new ObjectMapper();
 
-        @Autowired
-        private ReservationRepository reservationRepository;
-        @Autowired
-        private StockRepository stockRepository;
-        @Autowired
-        private ProcessedEventRepository processedEventRepository;
-        @Autowired
-        private KafkaConfigLoader configLoader;
-        private final KafkaConsumer<String, String> consumer;
+    public PaymentFailedListner(KafkaConfigLoader configLoader) {
+        this.consumer = new KafkaConsumer<>(configLoader.getConsumerProperties());
+    }
 
-        private final ObjectMapper mapper = new ObjectMapper();
+    @PostConstruct
+    public void start() {
+        consumer.subscribe(List.of("PaymentFailed"));
 
-        public PaymentFailureHandler(KafkaConfigLoader loader) {
-            this.consumer = new KafkaConsumer<>(loader.getConsumerProperties());
-        }
-
-        @PostConstruct
-        public void start() {
-            consumer.subscribe(List.of("PaymentFailed"));
-
-            Executors.newSingleThreadExecutor().submit(() -> {
-                while (true) {
-                    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(200));
-                    for (ConsumerRecord<String, String> rec : records) {
-                        try {
+        Executors.newSingleThreadExecutor().submit(() -> {
+            while (true) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(200));
+                for (ConsumerRecord<String, String> rec : records) {
+                    int maxRetries=3;
+                    int attempt=0;
+                    long backoffMillis = 2000;
+                    boolean success=false;
+                    while(attempt<maxRetries && !success){
+                        try{
                             handlePaymentFailed(rec.value());
-                            consumer.commitAsync();
-                        } catch (Exception ex) {
-                            // optional: send to DLQ
+                            success=true;
+                        }catch (Exception e){
+                            attempt++;
+                            if(attempt<maxRetries){
+                                try {
+                                    Thread.sleep(backoffMillis);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                }
+                            }else{
+                                sendToDLQ(rec, e);
+                            }
                         }
                     }
                 }
-            });
+            }
+        });
+    }
+
+    private void handlePaymentFailed(String json) throws JsonProcessingException {
+        PaymentFailedEvent event = mapper.readValue(json, PaymentFailedEvent.class);
+
+        // idempotency check
+        if (processedEventRepository.existsByEventId(event.getId())) return;
+
+        List<Reservation> reservations = reservationRepository.findByOrderId(event.getOrderId());
+        for (Reservation r : reservations) {
+            Stock stock = stockRepository.findBySku(r.getSku());
+            stock.setAvailable(stock.getAvailable() + r.getQuantity());
+            stockRepository.save(stock);
+            reservationRepository.delete(r);
         }
 
-        private void handlePaymentFailed(String json) throws JsonProcessingException {
-            PaymentFailedEvent event = mapper.readValue(json, PaymentFailedEvent.class);
-
-            // idempotency check
-            if (processedEventRepository.existsByEventId(event.getId())) return;
-
-            // 1️⃣ find reservations for this order
-            List<Reservation> reservations = reservationRepository.findByOrderId(event.getOrderId());
-            for (Reservation r : reservations) {
-                Stock stock = stockRepository.findBySku(r.getSku());
-                stock.setAvailable(stock.getAvailable() + r.getQuantity());
-                stockRepository.save(stock);
-                reservationRepository.delete(r);
+        processedEventRepository.save(new ProcessedEvent(event.getOrderId()));
+    }
+    private void initializeTransactions(KafkaProducer<String, String> producer) {
+        if (!initialized) {
+            synchronized (initLock) {
+                if (!initialized) {
+                    try {
+                        producer.initTransactions();
+                        initialized = true;
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to initialize transactions", e);
+                    }
+                }
             }
-
-            processedEventRepository.save(new ProcessedEvent(event.getOrderId()));
         }
     }
 
+    private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
+        Properties dlqprops=configLoader.getProducerProperties();
+        dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"payment-dlq-tx");
+        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
+        initializeTransactions(dlqProducer);
+        try {
+            dlqProducer.beginTransaction();
+            ProducerRecord<String, String> rec = new ProducerRecord<>("PaymentDLQ", record.value());
+            rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
+            dlqProducer.send(rec).get();
+            dlqProducer.commitTransaction();
+        }catch (Exception ex){
+            try {
+                dlqProducer.abortTransaction();
+            } catch (Exception abortEx) {
+                System.err.println("Failed to abort transaction: " + abortEx.getMessage());
+            }
+            System.err.println("Failed to send to DLQ: " + ex.getMessage());
+        }
+        dlqProducer.close();
+    }
 }
+

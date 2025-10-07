@@ -15,7 +15,7 @@ status VARCHAR(255)
 CREATE TABLE IF NOT EXISTS outbox(
     id UUID PRIMARY KEY,
     aggregate_id UUID,
-    type VARCHAR(255),
+    type text(255),
     payload JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(255)

@@ -33,7 +33,7 @@ public class OrderService {
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
-    @Transactional
+    @Transactional(rollbackOn = Exception.class)
     public UUID createOrder(OrderRequest orderRequest) throws JsonProcessingException {
         List<OrderItem> items=new ArrayList<>();
         UUID id=UUID.randomUUID();

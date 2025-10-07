@@ -20,8 +20,10 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -56,16 +58,13 @@ public class PaymentService {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @Async
     public void startConsumerThread() {
-        Thread thread = new Thread(() -> {
-            try {
-                processPayment();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        thread.setDaemon(false);
-        thread.start();
+        try {
+            processPayment();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     public void processPayment(){
@@ -73,20 +72,34 @@ public class PaymentService {
         while (true){
             ConsumerRecords<String, String> recs=kafkaConsumer.poll(Duration.ofMillis(100));
             for (ConsumerRecord<String, String> rec:recs){
-                System.out.println("-------");
-                System.out.println(rec.toString());
-                try{
-                    handlePayment(rec);
-                } catch (JsonProcessingException e) {
-                    sendToDLQ(rec, e);
+                int maxRetries=3;
+                int attempt=0;
+                long backoffMillis = 2000;
+                boolean success=false;
+                while(attempt<maxRetries && !success){
+                    try{
+                        handlePayment(rec);
+                        success=true;
+                    }catch (Exception e){
+                        attempt++;
+                        if(attempt<maxRetries){
+                            try {
+                                Thread.sleep(backoffMillis);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }else{
+                            sendToDLQ(rec, e);
+                        }
+                    }
                 }
             }
         }
 
     }
 
-    @Transactional
-    private void handlePayment(ConsumerRecord<String, String> rec) throws JsonProcessingException {
+    @Transactional(rollbackOn = Exception.class)
+    public void handlePayment(ConsumerRecord<String, String> rec) throws JsonProcessingException {
         String jsonPayload=rec.value();
         Headers headers=rec.headers();
 
@@ -121,6 +134,8 @@ public class PaymentService {
         outbox.setStatus("PENDING");
         outbox.setPayload(objectMapper.writeValueAsString(order));
         outbox.setCreatedAt(LocalDateTime.now());
+        System.out.println("status length: "+outbox.getStatus().length());
+        System.out.println("payload length: "+outbox.getPayload().length());
         outboxRepository.save(outbox);
 
         kafkaConsumer.commitAsync();
