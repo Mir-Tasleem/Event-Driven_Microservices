@@ -20,7 +20,9 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -33,20 +35,24 @@ import java.util.concurrent.Executors;
 public class PaymentFailedListner {
     private boolean initialized = false;
     private final Object initLock = new Object();
-    @Autowired
     private ReservationRepository reservationRepository;
-    @Autowired
     private StockRepository stockRepository;
-    @Autowired
     private ProcessedEventRepository processedEventRepository;
-    @Autowired
-    private KafkaConfigLoader configLoader;
     private final KafkaConsumer<String, String> consumer;
+    private final KafkaProducer<String, String> dlqProducer;
+    private  KafkaConfigLoader configLoader;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public PaymentFailedListner(KafkaConfigLoader configLoader) {
-        this.consumer = new KafkaConsumer<>(configLoader.getConsumerProperties());
+    public PaymentFailedListner(KafkaConfigLoader configLoader,ReservationRepository reservationRepository,
+                                StockRepository stockRepository, ProcessedEventRepository processedEventRepository,
+                                @Qualifier("paymentConsumer") KafkaConsumer<String, String> consumer, @Qualifier("paymentDLQProducer") KafkaProducer<String, String> dlqProducer) {
+        this.consumer = consumer;
+        this.dlqProducer=dlqProducer;
+        this.configLoader=configLoader;
+        this.reservationRepository=reservationRepository;
+        this.stockRepository=stockRepository;
+        this.processedEventRepository=processedEventRepository;
     }
 
     @PostConstruct
@@ -83,6 +89,7 @@ public class PaymentFailedListner {
         });
     }
 
+    @Transactional(rollbackFor = Exception.class)
     private void handlePaymentFailed(String json) throws JsonProcessingException {
         PaymentFailedEvent event = mapper.readValue(json, PaymentFailedEvent.class);
 
@@ -115,9 +122,6 @@ public class PaymentFailedListner {
     }
 
     private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
-        Properties dlqprops=configLoader.getProducerProperties();
-        dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"payment-dlq-tx");
-        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
         initializeTransactions(dlqProducer);
         try {
             dlqProducer.beginTransaction();

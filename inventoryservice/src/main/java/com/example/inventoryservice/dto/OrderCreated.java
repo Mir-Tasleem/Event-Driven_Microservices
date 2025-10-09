@@ -13,6 +13,7 @@ public class OrderCreated {
     private List<InventoryOrderItem> orderItems;
     private double totalAmount;
 
+
     @JsonCreator
     public OrderCreated(
             @JsonProperty("id") UUID id,

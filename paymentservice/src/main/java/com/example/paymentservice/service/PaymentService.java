@@ -20,7 +20,6 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
@@ -29,7 +28,6 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
@@ -46,13 +44,11 @@ public class PaymentService {
 
     private ObjectMapper objectMapper=new ObjectMapper();
 
-    public PaymentService(ProcessedEventRepository processedEventRepository, KafkaConfigLoader configLoader, OutboxRepository outboxRepository, PaymentRepository paymentRepository){
+    public PaymentService( KafkaConsumer<String, String> kafkaConsumer,ProcessedEventRepository processedEventRepository, KafkaConfigLoader configLoader, OutboxRepository outboxRepository, PaymentRepository paymentRepository){
         this.processedEventRepository=processedEventRepository;
         this.outboxRepository=outboxRepository;
         this.paymentRepository=paymentRepository;
-        Properties props=configLoader.getConsumerProperties();
-        props.put("consumer.json.value.type.map", "InventoryReserved=com.example.paymentservice.dto.OrderRecieved");
-        kafkaConsumer=new KafkaConsumer<>(props);
+        this.kafkaConsumer=kafkaConsumer;
         objectMapper.findAndRegisterModules();
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
     }
@@ -99,7 +95,7 @@ public class PaymentService {
     }
 
     @Transactional(rollbackOn = Exception.class)
-    public void handlePayment(ConsumerRecord<String, String> rec) throws JsonProcessingException {
+    private void handlePayment(ConsumerRecord<String, String> rec) throws JsonProcessingException {
         String jsonPayload=rec.value();
         Headers headers=rec.headers();
 
@@ -142,11 +138,11 @@ public class PaymentService {
     }
 
     private boolean doPayment(OrderRecieved order){
-        //payment business logic
         if(order.getTotalAmount()%2==0){
             return true;
+        }else {
+            return false;
         }
-        return false;
     }
 
     private void initializeTransactions(KafkaProducer<String, String> producer) {

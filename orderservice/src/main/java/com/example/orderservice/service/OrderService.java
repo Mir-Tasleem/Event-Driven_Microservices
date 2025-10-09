@@ -11,13 +11,12 @@ import com.example.orderservice.repository.OutboxRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -29,11 +28,12 @@ public class OrderService {
     public OrderService(OrderRepository orderRepository, OutboxRepository outboxRepository, ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
-        this.objectMapper = objectMapper.findAndRegisterModules();
+        this.objectMapper = objectMapper;
+        objectMapper.findAndRegisterModules();
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
-    @Transactional(rollbackOn = Exception.class)
+    @Transactional(rollbackFor = Exception.class)
     public UUID createOrder(OrderRequest orderRequest) throws JsonProcessingException {
         List<OrderItem> items=new ArrayList<>();
         UUID id=UUID.randomUUID();
@@ -75,6 +75,7 @@ public class OrderService {
                 .sum();
     }
 
+    @Transactional(readOnly = true)
     public OrderResponse getOrderById(UUID id) {
         Order order=orderRepository.findById(id).orElseThrow(() -> new RuntimeException("Order not found"));
         OrderResponse orderResponse=new OrderResponse();
@@ -82,6 +83,7 @@ public class OrderService {
         orderResponse.setCustomerId(order.getCustomerId());
         orderResponse.setOrderItems(order.getOrderItems());
         orderResponse.setAmount(order.getTotalAmount());
+        orderResponse.setStatus(order.getStatus());
         return orderResponse;
     }
 }

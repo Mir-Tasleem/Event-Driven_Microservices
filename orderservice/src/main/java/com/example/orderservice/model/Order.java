@@ -26,7 +26,7 @@ public class Order {
     @CreatedDate
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "order",cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "order",cascade = CascadeType.ALL,fetch = FetchType.EAGER)
     @JsonManagedReference
     List<OrderItem> orderItems=new ArrayList<>();
 

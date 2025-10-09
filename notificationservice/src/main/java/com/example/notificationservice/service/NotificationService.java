@@ -40,12 +40,11 @@ public class NotificationService {
     KafkaConsumer<String, String> kafkaConsumer;
     ObjectMapper objectMapper=new ObjectMapper();
 
-    public NotificationService(NotificationRepository notificationRepository, KafkaConfigLoader configLoader){
+    public NotificationService(KafkaConsumer<String, String> kafkaConsumer,NotificationRepository notificationRepository, KafkaConfigLoader configLoader){
         this.notificationRepository=notificationRepository;
         objectMapper.findAndRegisterModules();
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-        Properties props=configLoader.getConsumerProperties();
-        this.kafkaConsumer=new KafkaConsumer<>(props);
+        this.kafkaConsumer=kafkaConsumer;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -89,7 +88,7 @@ public class NotificationService {
     }
 
 
-    @Transactional
+    @Transactional(rollbackOn = Exception.class)
     private void handle(ConsumerRecord<String, String> rec) throws JsonProcessingException {
         String jsonPayload=rec.value();
         Headers headers=rec.headers();

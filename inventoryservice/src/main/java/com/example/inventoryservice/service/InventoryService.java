@@ -14,7 +14,6 @@ import com.example.inventoryservice.repository.StockRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -23,10 +22,13 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 
 import java.nio.charset.StandardCharsets;
@@ -41,22 +43,23 @@ public class InventoryService {
     private volatile boolean initialized = false;
     private final Object initLock = new Object();
     private StockRepository stockRepository;
-    private KafkaConfigLoader configLoader;
     private ReservationRepository reservationRepository;
     private OutboxRepository outboxRepository;
     private ProcessedEventRepository processedEventRepository;
-    private KafkaConsumer<String, String> kafkaConsumer;
+    private final KafkaConsumer<String, String> kafkaConsumer;
+    private final KafkaProducer<String, String> dlqProducer;
 
     private ObjectMapper objectMapper = new ObjectMapper();
 
-    public InventoryService(StockRepository stockRepository, KafkaConfigLoader configLoader, ReservationRepository reservationRepository, OutboxRepository outboxRepository, ProcessedEventRepository processedEventRepository){
+    public InventoryService(StockRepository stockRepository,@Qualifier("orderConsumer") KafkaConsumer<String, String> kafkaConsumer,
+                            ReservationRepository reservationRepository, OutboxRepository outboxRepository,
+                            ProcessedEventRepository processedEventRepository,@Qualifier("inventoryDLQProducer") KafkaProducer<String, String> dlqProducer){
         this.stockRepository=stockRepository;
         this.reservationRepository=reservationRepository;
         this.outboxRepository=outboxRepository;
         this.processedEventRepository=processedEventRepository;
-        Properties props=configLoader.getConsumerProperties();
-        props.put("consumer.json.value.type.map", "OrderCreated=com.example.inventoryservice.dto.OrderCreated");
-        this.kafkaConsumer=new KafkaConsumer<>(props);
+        this.kafkaConsumer=kafkaConsumer;
+        this.dlqProducer=dlqProducer;
         objectMapper.findAndRegisterModules();
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
@@ -103,8 +106,8 @@ public class InventoryService {
         }
     }
 
-    @Transactional(rollbackOn = Exception.class)
-    private void handleOrder(ConsumerRecord<String, String> record) throws JsonProcessingException {
+    @Transactional(rollbackFor = Exception.class)
+    public void handleOrder(ConsumerRecord<String, String> record) throws JsonProcessingException {
         String jsonPayload=record.value();
         Headers headers = record.headers();
         OrderCreated order = objectMapper.readValue(jsonPayload, OrderCreated.class);
@@ -143,6 +146,7 @@ public class InventoryService {
      * @param order the order to reserve stock for
      * @return true if the stock was reserved successfully, false otherwise
      */
+    @Transactional(propagation = Propagation.MANDATORY)
     private boolean reserveStock(OrderCreated order){
         for(InventoryOrderItem item: order.getOrderItems()){
             Stock stock = stockRepository.findBySku(item.getSku());
@@ -179,9 +183,6 @@ public class InventoryService {
      * @param e the exception to set as the error header
      */
     private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
-        Properties dlqprops=configLoader.getProducerProperties();
-        dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"inventory-dlq-tx");
-        KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
         initializeTransactions(dlqProducer);
         try {
             dlqProducer.beginTransaction();

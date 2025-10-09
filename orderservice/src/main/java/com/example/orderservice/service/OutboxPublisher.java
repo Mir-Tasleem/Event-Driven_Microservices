@@ -30,9 +30,17 @@ public class OutboxPublisher {
 
     @Autowired
     public OutboxPublisher(OutboxRepository outboxRepository, KafkaConfigLoader kafkaConfigLoader) {
+        this(outboxRepository, createKafkaProducer(kafkaConfigLoader));
+    }
+
+    // Package-private constructor for testing
+    OutboxPublisher(OutboxRepository outboxRepository, KafkaProducer<String, String> kafkaProducer) {
         this.outboxRepository = outboxRepository;
-        Properties props = kafkaConfigLoader.getProducerProperties();
-        this.kafkaProducer = new KafkaProducer<>(props);
+        this.kafkaProducer = kafkaProducer;
+    }
+
+    private static KafkaProducer<String, String> createKafkaProducer(KafkaConfigLoader kafkaConfigLoader) {
+        return new KafkaProducer<>(kafkaConfigLoader.getProducerProperties());
     }
 
     private void initializeTransactions() {

@@ -12,6 +12,15 @@ public class OrderResponse {
     private UUID customerId;
     private List<OrderItem> orderItems;
     private double amount;
+    private String status;
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
 
     public UUID getId() {
         return id;

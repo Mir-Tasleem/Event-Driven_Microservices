@@ -20,16 +20,25 @@ import jakarta.annotation.PreDestroy;
 
 @Service
 public class OutboxPublisher {
+    private final OutboxRepository outboxRepository;
+    private final KafkaProducer<String, String> kafkaProducer;
     private volatile boolean initialized = false;
     private final Object initLock = new Object();
-    @Autowired
-    private OutboxRepository outboxRepository;
 
     @Autowired
-    private ProcessedEventRepository processedEventRepository;
+    public OutboxPublisher(OutboxRepository outboxRepository, KafkaConfigLoader kafkaConfigLoader) {
+        this(outboxRepository, createKafkaProducer(kafkaConfigLoader));
+    }
 
-    private KafkaProducer<String, String> kafkaProducer=new KafkaProducer<>(KafkaConfigLoader.getProducerProperties());
+    // Package-private constructor for testing
+    OutboxPublisher(OutboxRepository outboxRepository, KafkaProducer<String, String> kafkaProducer) {
+        this.outboxRepository = outboxRepository;
+        this.kafkaProducer = kafkaProducer;
+    }
 
+    private static KafkaProducer<String, String> createKafkaProducer(KafkaConfigLoader kafkaConfigLoader) {
+        return new KafkaProducer<>(kafkaConfigLoader.getProducerProperties());
+    }
 
     private void initializeTransactions() {
         if (!initialized) {

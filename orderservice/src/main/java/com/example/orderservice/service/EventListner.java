@@ -10,7 +10,6 @@ import com.example.orderservice.repository.ProcessedEventRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -22,6 +21,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -46,14 +46,13 @@ public class EventListner {
     private KafkaConsumer<String, String> consumer;
 
     @Autowired
-    public EventListner(ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository, OrderRepository orderRepository, KafkaConfigLoader configLoader){
+    public EventListner(KafkaConsumer<String, String> kafkaConsumer, ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository, OrderRepository orderRepository, KafkaConfigLoader configLoader){
         this.processedEventRepository=processedEventRepository;
         this.outboxRepository=outboxRepository;
         this.orderRepository=orderRepository;
         this.configLoader = configLoader;
         this.objectMapper=new ObjectMapper();
-        Properties props=configLoader.getConsumerProperties();
-        this.consumer=new KafkaConsumer<>(props);
+        this.consumer=kafkaConsumer;
         objectMapper.findAndRegisterModules();
         objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
     }
@@ -99,8 +98,8 @@ public class EventListner {
         }
     }
 
-    @Transactional
-    private void handleEvent(ConsumerRecord<String, String> record) throws JsonProcessingException {
+    @Transactional(rollbackFor = Exception.class)
+     void handleEvent(ConsumerRecord<String, String> record) throws JsonProcessingException {
         String payload=record.value();
         String topic=record.topic();
 
@@ -142,7 +141,7 @@ public class EventListner {
        orderRepository.save(order);
     }
 
-    private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
+     void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
         KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(configLoader.getProducerProperties());
         ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", record.value());
         rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
