@@ -3,6 +3,7 @@ package com.example.orderservice.service;
 import com.example.orderservice.dto.OrderItemDTO;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
+import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.model.Order;
 import com.example.orderservice.model.OrderItem;
 import com.example.orderservice.model.Outbox;
@@ -33,6 +34,13 @@ public class OrderService {
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
+    /**
+     *
+     * @param orderRequest
+     * @return
+     * @throws JsonProcessingException
+     * This method is used to create the order
+     */
     @Transactional(rollbackFor = Exception.class)
     public UUID createOrder(OrderRequest orderRequest) throws JsonProcessingException {
         List<OrderItem> items=new ArrayList<>();
@@ -69,15 +77,27 @@ public class OrderService {
         return order.getId();
     }
 
+    /**
+     *
+     * @param orderItems
+     * @return
+     * This method is used to calculate the total amount of the order
+     */
     private double calculateTotalAmount(List<OrderItemDTO> orderItems) {
         return orderItems.stream()
                 .mapToDouble(item->item.getPrice()*item.getQty())
                 .sum();
     }
 
+    /**
+     *
+     * @param id
+     * @return
+     * This method is used to get the order by id
+     */
     @Transactional(readOnly = true)
     public OrderResponse getOrderById(UUID id) {
-        Order order=orderRepository.findById(id).orElseThrow(() -> new RuntimeException("Order not found"));
+        Order order=orderRepository.findById(id).orElseThrow(() -> new OrderNotFoundException("Order with orderId: "+id+" not found"));
         OrderResponse orderResponse=new OrderResponse();
         orderResponse.setId(order.getId());
         orderResponse.setCustomerId(order.getCustomerId());

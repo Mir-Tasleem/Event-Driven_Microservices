@@ -60,6 +60,10 @@ public class OutboxPublisher {
         }
     }
 
+    /**
+     *
+     * This method is used to publish the pending events
+     */
     @Scheduled(fixedRate = 5000)
     @Transactional
     public void publishPending() {

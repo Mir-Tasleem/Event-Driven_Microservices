@@ -27,8 +27,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
-import java.util.Properties;
 import java.util.UUID;
 
 @Service
@@ -67,7 +65,7 @@ public class EventListner {
         }
     }
 
-    public void handle() throws JsonProcessingException {
+    public void handle(){
         consumer.subscribe(List.of("InventoryRejected","PaymentAuthorized","PaymentRejected"));
 
         while (true) {
@@ -98,6 +96,12 @@ public class EventListner {
         }
     }
 
+    /**
+     *
+     * @param record
+     * @throws JsonProcessingException
+     * This method is used to handle the events from the kafka topic
+     */
     @Transactional(rollbackFor = Exception.class)
      void handleEvent(ConsumerRecord<String, String> record) throws JsonProcessingException {
         String payload=record.value();
@@ -141,6 +145,12 @@ public class EventListner {
        orderRepository.save(order);
     }
 
+    /**
+     *
+     * @param record
+     * @param e
+     * This method is used to send the events to the DLQ
+     */
      void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
         KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(configLoader.getProducerProperties());
         ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", record.value());

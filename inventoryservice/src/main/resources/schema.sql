@@ -15,7 +15,7 @@
 --CREATE TABLE IF NOT EXISTS outbox(
 --    id UUID PRIMARY KEY,
 --    aggregate_id UUID,
---    type text(255),
+--    type VARCHAR(255),
 --    payload JSONB,
 --    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 --    status VARCHAR(255)
