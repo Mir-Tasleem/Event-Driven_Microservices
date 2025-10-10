@@ -39,7 +39,7 @@ This system simulates an **order processing pipeline** using an event-driven mic
 
 ----
 
-![Event-Driven Microservices System](Event-Driven Microservices Architecture.png)
+![Event-Driven Microservices System](Architecture.png)
 
 ## Prerequisites
 
