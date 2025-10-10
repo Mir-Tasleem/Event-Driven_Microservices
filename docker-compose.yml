@@ -49,6 +49,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U order_user"]
       interval: 10s
       retries: 5
+    volumes:
+      - pg-order-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -65,6 +67,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U inventory_user"]
       interval: 10s
       retries: 5
+    volumes:
+      - pg-inventory-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -81,6 +85,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U payment_user"]
       interval: 10s
       retries: 5
+    volumes:
+      - pg-payment-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -97,6 +103,8 @@ services:
       test: [ "CMD-SHELL", "pg_isready -U notification_user" ]
       interval: 10s
       retries: 5
+    volumes:
+      - pg-notification-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -116,8 +124,6 @@ services:
         condition: service_healthy
       pg-order:
         condition: service_healthy
-    volumes:
-      - pg-order-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -134,8 +140,6 @@ services:
         condition: service_healthy
       pg-inventory:
         condition: service_healthy
-    volumes:
-      - pg-inventory-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -152,8 +156,6 @@ services:
         condition: service_healthy
       pg-payment:
         condition: service_healthy
-    volumes:
-      - pg-payment-data:/var/lib/postgresql/data
     networks:
       - backend
 
@@ -170,8 +172,6 @@ services:
         condition: service_healthy
       pg-notification:
         condition: service_healthy
-    volumes:
-      - pg-notification-data:/var/lib/postgresql/data
     networks:
       - backend
 

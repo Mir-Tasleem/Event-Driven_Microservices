@@ -26,6 +26,7 @@ spring:
           include: health,info
     endpoint:
       health:
+        show-components: always
         show-details: always
 
 
