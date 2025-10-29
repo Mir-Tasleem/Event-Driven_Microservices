@@ -1,13 +1,6 @@
 package com.example.orderservice.service;
 
 import com.example.orderservice.config.KafkaConfigLoader;
-import com.example.orderservice.model.Order;
-import com.example.orderservice.model.Outbox;
-import com.example.orderservice.model.ProcessedEvent;
-import com.example.orderservice.repository.OrderRepository;
-import com.example.orderservice.repository.OutboxRepository;
-import com.example.orderservice.repository.ProcessedEventRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -21,33 +14,23 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 public class EventListner {
     private KafkaConfigLoader configLoader;
-
-    private OrderRepository orderRepository;
-
-    private OutboxRepository outboxRepository;
-
-    private ProcessedEventRepository processedEventRepository;
-
+    private EventHandlerService eventHandlerService;
     private ObjectMapper objectMapper;
-
     private KafkaConsumer<String, String> consumer;
 
     @Autowired
-    public EventListner(KafkaConsumer<String, String> kafkaConsumer, ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository, OrderRepository orderRepository, KafkaConfigLoader configLoader){
-        this.processedEventRepository=processedEventRepository;
-        this.outboxRepository=outboxRepository;
-        this.orderRepository=orderRepository;
+    public EventListner(KafkaConsumer<String, String> kafkaConsumer,
+                        EventHandlerService eventHandlerService,
+                          KafkaConfigLoader configLoader){
+        this.eventHandlerService=eventHandlerService;
         this.configLoader = configLoader;
         this.objectMapper=new ObjectMapper();
         this.consumer=kafkaConsumer;
@@ -70,91 +53,46 @@ public class EventListner {
 
         while (true) {
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
-            for (ConsumerRecord<String, String> record : records) {
-                int maxRetries=3;
-                int attempt=0;
-                long backoffMillis = 2000;
-                boolean success=false;
-                while(attempt<maxRetries && !success){
-                    try{
-                        handleEvent(record);
-                        success=true;
-                    }catch (Exception e){
-                        attempt++;
-                        if(attempt<maxRetries){
-                            try {
-                                Thread.sleep(backoffMillis);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                            }
-                        }else{
-                            sendToDLQ(record, e);
-                        }
-                    }
+            for (ConsumerRecord<String, String> rec : records) {
+                handleWithRetry(rec);
+            }
+        }
+    }
+
+    private void handleWithRetry(ConsumerRecord<String, String> rec){
+        int maxRetries=3;
+        int attempt=0;
+        long backoffMillis = 2000;
+        boolean success=false;
+        while(attempt<maxRetries && !success){
+            try{
+                eventHandlerService.handleEvent(rec);
+                success=true;
+            }catch (Exception e){
+                attempt++;
+                if(attempt<maxRetries){
+                    sleep(backoffMillis);
+                }else{
+                    sendToDLQ(rec, e);
                 }
             }
         }
     }
 
-    /**
-     *
-     * @param record
-     * @throws JsonProcessingException
-     * This method is used to handle the events from the kafka topic
-     */
-    @Transactional(rollbackFor = Exception.class)
-     void handleEvent(ConsumerRecord<String, String> record) throws JsonProcessingException {
-        String payload=record.value();
-        String topic=record.topic();
-
-        Order order=objectMapper.readValue(payload, Order.class);
-        UUID orderId=order.getId();
-
-
-        //idempotency check
-        if(processedEventRepository.existsById(orderId)){
-            return;
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-
-       if(topic.equalsIgnoreCase("InventoryRejected") || topic.equalsIgnoreCase("PaymentRejected")){
-           order.setStatus("CANCELLED");
-           Outbox outbox=new Outbox();
-           outbox.setId(UUID.randomUUID());
-           outbox.setAggregateId(order.getId());
-           outbox.setPayload(objectMapper.writeValueAsString(order));
-           outbox.setType("OrderCancelled");
-           outbox.setStatus("PENDING");
-           outbox.setCreatedAt(LocalDateTime.now());
-           System.out.println("order canceled wit id:"+ orderId);
-           outboxRepository.save(outbox);
-        }else if(topic.equalsIgnoreCase("PaymentAuthorized")){
-           order.setStatus("COMPLETED");
-           Outbox outbox=new Outbox();
-           outbox.setId(UUID.randomUUID());
-           outbox.setAggregateId(order.getId());
-           outbox.setType("OrderCompleted");
-           outbox.setPayload(objectMapper.writeValueAsString(order));
-           outbox.setStatus("PENDING");
-           outbox.setCreatedAt(LocalDateTime.now());
-           System.out.println("order complted wit id:"+ orderId);
-
-           outboxRepository.save(outbox);
-        }
-
-       processedEventRepository.save(new ProcessedEvent(orderId));
-       orderRepository.save(order);
     }
 
-    /**
-     *
-     * @param record
-     * @param e
-     * This method is used to send the events to the DLQ
-     */
-     void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
+
+     void sendToDLQ(ConsumerRecord<String, String> consumerRecord, Exception e){
         KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(configLoader.getProducerProperties());
-        ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", record.value());
+        ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", consumerRecord.value());
         rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
         dlqProducer.send(rec);
+        dlqProducer.close();
     }
 }

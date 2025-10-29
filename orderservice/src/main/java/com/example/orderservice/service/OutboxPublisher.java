@@ -1,16 +1,16 @@
 package com.example.orderservice.service;
 
 import com.example.orderservice.config.KafkaConfigLoader;
-import com.example.orderservice.model.Order;
+import com.example.orderservice.exception.ProducerNotInitialisedException;
 import com.example.orderservice.model.Outbox;
 import com.example.orderservice.repository.OutboxRepository;
-import com.example.orderservice.repository.ProcessedEventRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 import jakarta.annotation.PreDestroy;
 import jakarta.transaction.Transactional;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -23,6 +23,7 @@ import java.util.UUID;
 
 @Service
 public class OutboxPublisher {
+    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
     private final OutboxRepository outboxRepository;
     private final KafkaProducer<String, String> kafkaProducer;
     private volatile boolean initialized = false;
@@ -50,10 +51,9 @@ public class OutboxPublisher {
                     try {
                         this.kafkaProducer.initTransactions();
                         initialized = true;
-                        System.out.println("Kafka transactions initialized successfully");
+                       log.info("Kafka transactions initialized successfully");
                     } catch (Exception e) {
-                        System.err.println("Failed to initialize Kafka transactions: " + e.getMessage());
-                        throw new RuntimeException("Failed to initialize Kafka transactions", e);
+                        throw new ProducerNotInitialisedException("Failed to initialize Kafka transactions", e);
                     }
                 }
             }
@@ -79,9 +79,9 @@ public class OutboxPublisher {
                 rec.headers().add("occurredAt",Instant.now().toString().getBytes(StandardCharsets.UTF_8));
                 kafkaProducer.send(rec,((metadata, exception) -> {
                     if(exception != null){
-                        System.out.println(exception.getMessage());
+                        log.error(exception.getMessage());
                     }else{
-                        System.out.println("Event sent successfully");
+                        log.info("Event sent successfully");
                     }
                 }));
             }
@@ -93,7 +93,7 @@ public class OutboxPublisher {
             kafkaProducer.commitTransaction();
         }catch (Exception e){
             kafkaProducer.abortTransaction();
-            System.out.println(e.getMessage());
+            log.error(e.getMessage());
         }finally {
             kafkaProducer.flush();
         }

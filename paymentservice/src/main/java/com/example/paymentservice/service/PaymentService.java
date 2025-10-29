@@ -1,5 +1,6 @@
 package com.example.paymentservice.service;
 
+import com.example.paymentservice.exception.ProducerNotInitialisedException;
 import com.example.paymentservice.model.Outbox;
 import com.example.paymentservice.model.ProcessedEvent;
 import com.example.paymentservice.repository.OutboxRepository;
@@ -18,8 +19,9 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
@@ -34,6 +36,7 @@ import java.util.UUID;
 
 @Service
 public class PaymentService {
+    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
     private volatile boolean initialized = false;
     private final Object initLock = new Object();
     private ProcessedEventRepository processedEventRepository;
@@ -44,7 +47,7 @@ public class PaymentService {
 
     private ObjectMapper objectMapper=new ObjectMapper();
 
-    public PaymentService( KafkaConsumer<String, String> kafkaConsumer,ProcessedEventRepository processedEventRepository, KafkaConfigLoader configLoader, OutboxRepository outboxRepository, PaymentRepository paymentRepository){
+    public PaymentService( KafkaConsumer<String, String> kafkaConsumer,ProcessedEventRepository processedEventRepository, OutboxRepository outboxRepository, PaymentRepository paymentRepository){
         this.processedEventRepository=processedEventRepository;
         this.outboxRepository=outboxRepository;
         this.paymentRepository=paymentRepository;
@@ -68,36 +71,43 @@ public class PaymentService {
         while (true){
             ConsumerRecords<String, String> recs=kafkaConsumer.poll(Duration.ofMillis(100));
             for (ConsumerRecord<String, String> rec:recs){
-                int maxRetries=3;
-                int attempt=0;
-                long backoffMillis = 2000;
-                boolean success=false;
-                while(attempt<maxRetries && !success){
-                    try{
-                        handlePayment(rec);
-                        success=true;
-                    }catch (Exception e){
-                        attempt++;
-                        if(attempt<maxRetries){
-                            try {
-                                Thread.sleep(backoffMillis);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                            }
-                        }else{
-                            sendToDLQ(rec, e);
-                        }
-                    }
+                processPaymentWithRetry(rec);
+            }
+        }
+    }
+
+    private void processPaymentWithRetry(ConsumerRecord<String, String> rec){
+        int maxRetries=3;
+        int attempt=0;
+        long backoffMillis = 2000;
+        boolean success=false;
+        while(attempt<maxRetries && !success){
+            try{
+                handlePayment(rec);
+                kafkaConsumer.commitAsync();
+                success=true;
+            }catch (Exception e){
+                attempt++;
+                if(attempt<maxRetries){
+                    sleep(backoffMillis);
+                }else{
+                    sendToDLQ(rec, e);
                 }
             }
         }
+    }
 
+    private void sleep(long backoffMillis){
+        try {
+            Thread.sleep(backoffMillis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Transactional(rollbackOn = Exception.class)
     private void handlePayment(ConsumerRecord<String, String> rec) throws JsonProcessingException {
         String jsonPayload=rec.value();
-        Headers headers=rec.headers();
 
         OrderRecieved order=objectMapper.readValue(jsonPayload, OrderRecieved.class);
         UUID orderId=order.getId();
@@ -107,7 +117,7 @@ public class PaymentService {
         }
 
         boolean paid=doPayment(order);
-        String status=paid==true?"PaymentAuthorized":"PaymentRejected";
+        String status=paid?"PaymentAuthorized":"PaymentRejected";
 
         //create payment
         Payment payment=new Payment();
@@ -130,19 +140,11 @@ public class PaymentService {
         outbox.setStatus("PENDING");
         outbox.setPayload(objectMapper.writeValueAsString(order));
         outbox.setCreatedAt(LocalDateTime.now());
-        System.out.println("status length: "+outbox.getStatus().length());
-        System.out.println("payload length: "+outbox.getPayload().length());
         outboxRepository.save(outbox);
-
-        kafkaConsumer.commitAsync();
     }
 
     private boolean doPayment(OrderRecieved order){
-        if(order.getTotalAmount()%2==0){
-            return true;
-        }else {
-            return false;
-        }
+        return order.getTotalAmount()%2==0;
     }
 
     private void initializeTransactions(KafkaProducer<String, String> producer) {
@@ -153,30 +155,32 @@ public class PaymentService {
                         producer.initTransactions();
                         initialized = true;
                     } catch (Exception e) {
-                        throw new RuntimeException("Failed to initialize transactions", e);
+                        throw new ProducerNotInitialisedException("Failed to initialize transactions", e);
                     }
                 }
             }
         }
     }
-    private void sendToDLQ(ConsumerRecord<String, String> record, Exception e){
+    private void sendToDLQ(ConsumerRecord<String, String> consumerRecord, Exception e){
         Properties dlqprops=configLoader.getProducerProperties();
         dlqprops.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG,"payment-dlq-tx");
         KafkaProducer<String, String> dlqProducer = new KafkaProducer<>(dlqprops);
         initializeTransactions(dlqProducer);
         try {
             dlqProducer.beginTransaction();
-            ProducerRecord<String, String> rec = new ProducerRecord<>("PaymentDLQ", record.value());
+            ProducerRecord<String, String> rec = new ProducerRecord<>("PaymentDLQ", consumerRecord.value());
             rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
             dlqProducer.send(rec).get();
             dlqProducer.commitTransaction();
-        }catch (Exception ex){
+        }catch (InterruptedException ie){
+            Thread.currentThread().interrupt();
+        }catch(Exception ex){
             try {
                 dlqProducer.abortTransaction();
             } catch (Exception abortEx) {
-                System.err.println("Failed to abort transaction: " + abortEx.getMessage());
+                log.error("Failed to abort transaction: {}" , abortEx.getMessage());
             }
-            System.err.println("Failed to send to DLQ: " + ex.getMessage());
+            log.error("Failed to send to DLQ: {}" , ex.getMessage());
         }
         dlqProducer.close();
     }

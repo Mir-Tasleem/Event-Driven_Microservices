@@ -10,16 +10,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.UUID;
-import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-public class OutboxPublisherTest {
+class OutboxPublisherTest {
 
     @Mock
     private OutboxRepository outboxRepository;
@@ -56,7 +54,6 @@ public class OutboxPublisherTest {
         doNothing().when(kafkaProducer).flush();
 
         doAnswer(invocation -> {
-            ProducerRecord<String, String> record = invocation.getArgument(0);
             Callback callback = invocation.getArgument(1);
             callback.onCompletion(mock(RecordMetadata.class), null);
             return null;

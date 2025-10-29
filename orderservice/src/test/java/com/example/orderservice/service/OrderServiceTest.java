@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class OrderServiceTest {
+class OrderServiceTest {
 
     @Mock
     private OrderRepository orderRepository;  // Mock the repository
@@ -101,7 +101,7 @@ public class OrderServiceTest {
         orderreq.setCustomerId(customerId);
         orderreq.setItems(Collections.singletonList(item));
 
-        UUID orderId = orderService.createOrder(orderreq);
+        orderService.createOrder(orderreq);
 
         when(objectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("test") {});
         OrderService faultyService = new OrderService(orderRepository, outboxRepository, objectMapper);

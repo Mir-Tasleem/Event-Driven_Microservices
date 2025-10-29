@@ -1,9 +1,9 @@
 package com.example.inventoryservice.service;
 
-
 import com.example.inventoryservice.exception.ProducerNotInitialisedException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -13,70 +13,61 @@ import org.apache.kafka.common.header.internals.RecordHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 
 @Service
-public class InventoryService {
-    private static final Logger log = LoggerFactory.getLogger(InventoryService.class);
-    private volatile boolean initialized = false;
+public class PaymentFailedListener {
+    private static final Logger log = LoggerFactory.getLogger(PaymentFailedListener.class);
+    private boolean initialized = false;
     private final Object initLock = new Object();
-
-    private final KafkaConsumer<String, String> kafkaConsumer;
+    private final PaymentFailedHandlerService paymentFailedHandlerService;
+    private final KafkaConsumer<String, String> consumer;
     private final KafkaProducer<String, String> dlqProducer;
-    private OrderProcessorService orderProcessorService;
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    public InventoryService(OrderProcessorService orderProcessorService,
-                            @Qualifier("orderConsumer") KafkaConsumer<String, String> kafkaConsumer,@Qualifier("inventoryDLQProducer") KafkaProducer<String, String> dlqProducer){
 
-        this.orderProcessorService=orderProcessorService;
-        this.kafkaConsumer=kafkaConsumer;
+    public PaymentFailedListener(PaymentFailedHandlerService paymentFailedHandlerService,
+                                 @Qualifier("paymentConsumer") KafkaConsumer<String, String> consumer, @Qualifier("paymentDLQProducer") KafkaProducer<String, String> dlqProducer) {
+        this.consumer = consumer;
         this.dlqProducer=dlqProducer;
-        objectMapper.findAndRegisterModules();
-        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this.paymentFailedHandlerService=paymentFailedHandlerService;
     }
 
-
-    @EventListener(ApplicationReadyEvent.class)
-    @Async
-    public void startConsumerThread() {
-        try {
-            processOrder();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    @PostConstruct
+    public void start() {
+        consumer.subscribe(List.of("PaymentFailed"));
+        executor.submit(this::consumerecords);
     }
 
-
-    public void processOrder() {
-        kafkaConsumer.subscribe(List.of("OrderCreated"));
-        while (true){
-            ConsumerRecords<String, String> records = kafkaConsumer.poll(Duration.ofMillis(100));
-            for (ConsumerRecord<String, String> rec : records){
-               processRecordWithRetry(rec);
+    private void consumerecords() {
+        while (true) {
+            ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(200));
+            for (ConsumerRecord<String, String> rec : records) {
+                processWithRetry(rec);
             }
         }
     }
 
-    private void processRecordWithRetry(ConsumerRecord<String, String> rec) {
+    private void processWithRetry(ConsumerRecord<String, String> rec) {
         int maxRetries = 3;
         long backoffMillis = 2000;
+        int attempt = 0;
+        boolean success = false;
 
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        while (attempt < maxRetries && !success) {
             try {
-                orderProcessorService.handleOrder(rec);
-                kafkaConsumer.commitAsync();
-                return;
+                paymentFailedHandlerService.handlePaymentFailed(rec.value());
+                success = true;
             } catch (Exception e) {
+                attempt++;
                 if (attempt < maxRetries) {
                     sleep(backoffMillis);
                 } else {
@@ -114,7 +105,7 @@ public class InventoryService {
         initializeTransactions(dlqProducer);
         try {
             dlqProducer.beginTransaction();
-            ProducerRecord<String, String> rec = new ProducerRecord<>("InventoryDLQ", conRec.value());
+            ProducerRecord<String, String> rec = new ProducerRecord<>("PaymentDLQ", conRec.value());
             rec.headers().add(new RecordHeader("error",e.getMessage().getBytes(StandardCharsets.UTF_8)));
             dlqProducer.send(rec).get();
             dlqProducer.commitTransaction();
@@ -122,9 +113,9 @@ public class InventoryService {
             Thread.currentThread().interrupt();
             log.error("Thread was interrupted while sending to DLQ", ie);
             safelyAbortTransaction();
-        } catch (Exception ex){
+        }catch (Exception ex){
             safelyAbortTransaction();
-            log.error("Failed to send to DLQ: {}", ex.getMessage(), ex);
+            log.error("Failed to send to DLQ: {}" , ex.getMessage());
         }
         dlqProducer.close();
     }
@@ -136,4 +127,18 @@ public class InventoryService {
             log.error("Failed to abort DLQ transaction: {}", abortEx.getMessage(), abortEx);
         }
     }
+
+    @PreDestroy
+    public void shutdown() {
+        try {
+            if (consumer != null) {
+                consumer.wakeup();
+                consumer.close();
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
 }
+

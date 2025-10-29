@@ -1,6 +1,5 @@
 package com.example.paymentservice.service;
 
-import com.example.paymentservice.config.KafkaConfigLoader;
 import com.example.paymentservice.dto.InventoryOrderItem;
 import com.example.paymentservice.dto.OrderRecieved;
 import com.example.paymentservice.model.Outbox;
@@ -26,7 +25,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-public class PaymentServiceTest {
+class PaymentServiceTest {
 
     @Mock
     private ProcessedEventRepository processedEventRepository;
@@ -55,8 +54,7 @@ public class PaymentServiceTest {
         LocalDateTime createdAt = LocalDateTime.now();
         UUID customerId = UUID.randomUUID();
         double totalAmount = orderItems.getPrice() * orderItems.getQuantity();
-        OrderRecieved order = new OrderRecieved(orderId, "PENDING",createdAt,customerId, List.of(orderItems),totalAmount);
-        return order;
+        return new OrderRecieved(orderId, "PENDING",createdAt,customerId, List.of(orderItems),totalAmount);
     }
 
 
@@ -66,13 +64,13 @@ public class PaymentServiceTest {
         OrderRecieved order = createOrderRecieved(orderId,createInventoryOrderItem(200.0, 10));
 
         String json = mapper.writeValueAsString(order);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
 
         when(processedEventRepository.existsByEventId(orderId)).thenReturn(false);
 
         var method = PaymentService.class.getDeclaredMethod("handlePayment", ConsumerRecord.class);
         method.setAccessible(true);
-        method.invoke(paymentService, record);
+        method.invoke(paymentService, rec);
 
         ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository).save(paymentCaptor.capture());
@@ -98,13 +96,13 @@ public class PaymentServiceTest {
         OrderRecieved order = createOrderRecieved(orderId,createInventoryOrderItem(201.0, 5));
 
         String json = mapper.writeValueAsString(order);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
 
         when(processedEventRepository.existsByEventId(orderId)).thenReturn(false);
 
         var method = PaymentService.class.getDeclaredMethod("handlePayment", ConsumerRecord.class);
         method.setAccessible(true);
-        method.invoke(paymentService, record);
+        method.invoke(paymentService, rec);
 
         ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository).save(captor.capture());
@@ -117,13 +115,13 @@ public class PaymentServiceTest {
         OrderRecieved order = createOrderRecieved(orderId,createInventoryOrderItem(200.0, 10));
 
         String json = mapper.writeValueAsString(order);
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("InventoryReserved", 0, 0L, "key", json);
 
         when(processedEventRepository.existsByEventId(orderId)).thenReturn(true);
 
         var method = PaymentService.class.getDeclaredMethod("handlePayment", ConsumerRecord.class);
         method.setAccessible(true);
-        method.invoke(paymentService, record);
+        method.invoke(paymentService, rec);
 
         verify(paymentRepository, never()).save(any());
         verify(outboxRepository, never()).save(any());

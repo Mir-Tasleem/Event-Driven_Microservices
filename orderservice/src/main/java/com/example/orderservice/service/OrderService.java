@@ -52,14 +52,12 @@ public class OrderService {
         order.setCustomerId(orderRequest.getCustomerId());
         order.setStatus("PENDING");
         order.setCreatedAt(LocalDateTime.now());
-        System.out.println(orderRequest);
         orderRequest.getItems().forEach(orderItem -> {
             OrderItem item=new OrderItem(orderItem.getSku(),orderItem.getQty(),orderItem.getPrice());
             item.setOrder(order);
             items.add(item);
         });
         order.setOrderItems(items);
-        System.out.println(items);
         order.setTotalAmount(calculateTotalAmount(orderRequest.getItems()));
         orderRepository.save(order);
 

@@ -1,6 +1,6 @@
 package com.example.paymentservice.service;
 
-import com.example.paymentservice.config.KafkaConfigLoader;
+
 import com.example.paymentservice.model.Outbox;
 import com.example.paymentservice.repository.OutboxRepository;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -22,10 +22,8 @@ class OutboxPublisherTest {
     private OutboxRepository outboxRepository;
     @Mock
     private KafkaProducer<String, String> kafkaProducer;
-    @Mock
-    private KafkaConfigLoader kafkaConfigLoader;
 
-    @InjectMocks
+
     private OutboxPublisher outboxPublisher;
 
     @BeforeEach

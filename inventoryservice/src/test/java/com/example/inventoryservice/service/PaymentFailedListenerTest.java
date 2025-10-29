@@ -1,134 +1,125 @@
 package com.example.inventoryservice.service;
 
-import com.example.inventoryservice.config.KafkaConfigLoader;
-import com.example.inventoryservice.dto.PaymentFailedEvent;
-import com.example.inventoryservice.model.ProcessedEvent;
-import com.example.inventoryservice.model.Reservation;
-import com.example.inventoryservice.model.Stock;
-import com.example.inventoryservice.repository.ProcessedEventRepository;
-import com.example.inventoryservice.repository.ReservationRepository;
-import com.example.inventoryservice.repository.StockRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.inventoryservice.exception.ProducerNotInitialisedException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.Header;
-import org.apache.kafka.common.header.internals.RecordHeader;
+import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.*;
-import java.util.List;
-import java.util.Properties;
-import java.util.UUID;
+import org.mockito.Mockito;
 
+import java.lang.reflect.Method;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
-class PaymentFailedListnerTest {
+class PaymentFailedListenerTest {
 
-    @Mock
-    private ReservationRepository reservationRepository;
-    @Mock
-    private StockRepository stockRepository;
-    @Mock
-    private ProcessedEventRepository processedEventRepository;
-    @Mock
-    private KafkaConfigLoader configLoader;
-    @Mock
     private KafkaConsumer<String, String> consumer;
-    @Mock
-    private KafkaProducer<String, String> producer;
-
-    @InjectMocks
-    private PaymentFailedListner listener;
-
-    private ObjectMapper mapper;
+    private KafkaProducer<String, String> dlqProducer;
+    private PaymentFailedHandlerService handlerService;
+    private PaymentFailedListener listener;
 
     @BeforeEach
     void setup() {
-        MockitoAnnotations.openMocks(this);
-        mapper = new ObjectMapper();
-    }
+        consumer = mock(KafkaConsumer.class);
+        dlqProducer = mock(KafkaProducer.class);
+        handlerService = mock(PaymentFailedHandlerService.class);
 
-    @Test
-    void testInitializeTransactions_OnlyOnce() throws Exception {
-        KafkaProducer<String, String> mockProducer = mock(KafkaProducer.class);
-        doNothing().when(mockProducer).initTransactions();
-
-        var method = PaymentFailedListner.class.getDeclaredMethod("initializeTransactions", KafkaProducer.class);
-        method.setAccessible(true);
-
-        // Call twice
-        method.invoke(listener, mockProducer);
-        method.invoke(listener, mockProducer);
-
-        // Should initialize only once
-        verify(mockProducer, times(1)).initTransactions();
+        listener = new PaymentFailedListener(handlerService, consumer, dlqProducer);
     }
 
 
-
     @Test
-    void testHandlePaymentFailed_Success() throws Exception {
-        // Arrange
-        UUID orderId = UUID.randomUUID();
-        UUID eventId = UUID.randomUUID();
+    void testProcessWithRetry_SuccessfulOnFirstTry() throws Exception {
+         ConsumerRecord<String, String> rec = new ConsumerRecord<>("PaymentFailed", 0, 0, "key", "value");
+        doNothing().when(handlerService).handlePaymentFailed(rec.value());
 
-        PaymentFailedEvent event = new PaymentFailedEvent();
-        event.setId(eventId);
-        event.setOrderId(orderId);
-
-        Reservation reservation = new Reservation();
-        reservation.setSku("SKU123");
-        reservation.setQuantity(5L);
-
-        Stock stock = new Stock();
-        stock.setSku("SKU123");
-        stock.setAvailable(10L);
-
-        when(processedEventRepository.existsByEventId(eventId)).thenReturn(false);
-        when(reservationRepository.findByOrderId(orderId)).thenReturn(List.of(reservation));
-        when(stockRepository.findBySku("SKU123")).thenReturn(stock);
-
-        String json = mapper.writeValueAsString(event);
-
-        // Use reflection to call private method
-        var method = PaymentFailedListner.class.getDeclaredMethod("handlePaymentFailed", String.class);
+        Method method = PaymentFailedListener.class.getDeclaredMethod("processWithRetry", ConsumerRecord.class);
         method.setAccessible(true);
 
-        // Act
-        method.invoke(listener, json);
+         
+        method.invoke(listener, rec);
 
-        // Assert
-        assertEquals(15, stock.getAvailable());
-        verify(stockRepository, times(1)).save(stock);
-        verify(reservationRepository, times(1)).delete(reservation);
-        verify(processedEventRepository, times(1)).save(any(ProcessedEvent.class));
+         
+        verify(handlerService, times(1)).handlePaymentFailed(rec.value());
+        verify(dlqProducer, never()).send(any());
     }
 
+
     @Test
-    void testHandlePaymentFailed_Idempotent() throws Exception {
-        UUID eventId = UUID.randomUUID();
-        UUID orderId = UUID.randomUUID();
+    void testProcessWithRetry_FailsAndSendsToDLQ() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("PaymentFailed", 0, 0, "key", "value");
 
-        PaymentFailedEvent event = new PaymentFailedEvent();
-        event.setId(eventId);
-        event.setOrderId(orderId);
+        doThrow(new RuntimeException("fail")).when(handlerService).handlePaymentFailed(rec.value());
 
-        when(processedEventRepository.existsByEventId(eventId)).thenReturn(true);
+        doNothing().when(dlqProducer).initTransactions();
+        doNothing().when(dlqProducer).beginTransaction();
+        doNothing().when(dlqProducer).commitTransaction();
+        when(dlqProducer.send(any())).thenReturn(CompletableFuture.completedFuture(null));
 
-        String json = mapper.writeValueAsString(event);
-        var method = PaymentFailedListner.class.getDeclaredMethod("handlePaymentFailed", String.class);
+        Method method = PaymentFailedListener.class.getDeclaredMethod("processWithRetry", ConsumerRecord.class);
         method.setAccessible(true);
 
-        // Act
-        method.invoke(listener, json);
+        method.invoke(listener, rec);
 
-        // Assert — ensure no repo interactions after idempotency check
-        verify(reservationRepository, never()).findByOrderId(any());
-        verify(stockRepository, never()).save(any());
-        verify(reservationRepository, never()).delete(any());
-        verify(processedEventRepository, never()).save(any());
+        verify(handlerService, times(3)).handlePaymentFailed(rec.value());
+        verify(dlqProducer, times(1)).send(any());
+        verify(dlqProducer, times(1)).commitTransaction(); // ✅ Will now pass
+    }
+
+
+
+    @Test
+    void testConsumeRecords_CallsProcessWithRetry() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("PaymentFailed", 0, 0L, "key", "value");
+        ConsumerRecords<String, String> records = new ConsumerRecords<>(
+                Map.of(new TopicPartition("PaymentFailed", 0),
+                        Collections.singletonList(rec))
+        );
+
+        when(consumer.poll(any(Duration.class)))
+                .thenReturn(records)
+                .thenReturn(new ConsumerRecords<>(Collections.emptyMap()));
+
+        PaymentFailedListener spyListener = Mockito.spy(listener);
+
+        Method method = PaymentFailedListener.class.getDeclaredMethod("consumerecords");
+        method.setAccessible(true);
+
+        Thread thread = new Thread(() -> {
+            try {
+                method.invoke(spyListener);
+            } catch (Exception ignored) {
+                //ignore
+            }
+        });
+        thread.start();
+        Thread.sleep(300);
+        thread.interrupt();
+
+        verify(consumer, atLeastOnce()).poll(any(Duration.class));
+    }
+
+
+    @Test
+    void testInitializeTransactions_ThrowsProducerNotInitialisedException() throws Exception {
+        doThrow(new RuntimeException("init failed")).when(dlqProducer).initTransactions();
+
+        Method method = PaymentFailedListener.class.getDeclaredMethod("initializeTransactions", KafkaProducer.class);
+        method.setAccessible(true);
+
+        Exception exception=assertThrows(Exception.class,()->method.invoke(listener,dlqProducer));
+        Throwable cause = exception.getCause();
+        org.junit.jupiter.api.Assertions.assertNotNull(cause);
+        org.junit.jupiter.api.Assertions.assertTrue(cause instanceof ProducerNotInitialisedException);
+        org.junit.jupiter.api.Assertions.assertEquals("Failed to initialize transactions", cause.getMessage());
     }
 }

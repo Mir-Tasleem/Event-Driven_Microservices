@@ -20,7 +20,7 @@ public class Reservation {
 
     private String status;
 
-    public Reservation(){};
+    public Reservation(){}
 
     public Reservation(UUID orderId, String sku, Long quantity) {
         this.id = UUID.randomUUID();
@@ -42,7 +42,7 @@ public class Reservation {
         return orderId;
     }
 
-    public void setOrder_id(UUID orderId) {
+    public void setOrderId(UUID orderId) {
         this.orderId = orderId;
     }
 

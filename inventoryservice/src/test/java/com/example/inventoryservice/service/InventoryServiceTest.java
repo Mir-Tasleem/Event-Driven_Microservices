@@ -1,27 +1,29 @@
 package com.example.inventoryservice.service;
 
-import com.example.inventoryservice.dto.InventoryOrderItem;
-import com.example.inventoryservice.dto.OrderCreated;
-import com.example.inventoryservice.model.*;
+
+import com.example.inventoryservice.exception.ProducerNotInitialisedException;
 import com.example.inventoryservice.repository.*;
 import com.example.inventoryservice.util.TestUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
 
-import java.time.LocalDateTime;
-import java.util.*;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class InventoryServiceTest {
 
+    @Mock private StockService stockService;
+    @Mock private OrderProcessorService orderProcessorService;
     @Mock private StockRepository stockRepository;
     @Mock private ReservationRepository reservationRepository;
     @Mock private OutboxRepository outboxRepository;
@@ -32,163 +34,133 @@ class InventoryServiceTest {
     private InventoryService inventoryService;
 
     private ObjectMapper mapper=new ObjectMapper();
+    private AutoCloseable closeable;
 
     @BeforeEach
     void setup() {
-        MockitoAnnotations.openMocks(this);  // Initialize mocks
+        closeable = MockitoAnnotations.openMocks(this);  // Initialize mocks
 
         inventoryService = new InventoryService(
-                stockRepository,
+                orderProcessorService,
                 kafkaConsumer,
-                reservationRepository,
-                outboxRepository,
-                processedEventRepository,
                 kafkaProducer
         );
 
-        mapper = mapper;
         mapper.findAndRegisterModules();
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
 
 
+    @Test
+    void testInitializeTransactionsIndirectly_Success() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("OrderCreated", 0, 0, "key", "value");
 
-    private OrderCreated createOrder(UUID orderId){
-        List<InventoryOrderItem> orderItems = new ArrayList<>();
-        orderItems.add(new InventoryOrderItem("SKU123", 200.0,10));
-        String status="PENDING";
-        LocalDateTime  createdAt=LocalDateTime.now();
-        UUID customerId=UUID.randomUUID();
-        double totalAmount=2000.0;
-        OrderCreated order = new OrderCreated(orderId, status, createdAt, customerId, orderItems, totalAmount);
-        return order;
+        doNothing().when(kafkaProducer).initTransactions();
+        doNothing().when(kafkaProducer).beginTransaction();
+        doNothing().when(kafkaProducer).commitTransaction();
+        doNothing().when(kafkaProducer).flush();
+        doNothing().when(kafkaProducer).close();
+
+        when(kafkaProducer.send(any())).thenReturn(mock(java.util.concurrent.Future.class));
+
+        Method sendToDLQMethod = InventoryService.class.getDeclaredMethod("sendToDLQ", ConsumerRecord.class, Exception.class);
+        sendToDLQMethod.setAccessible(true);
+        sendToDLQMethod.invoke(inventoryService, rec, new RuntimeException("test"));
+
+        verify(kafkaProducer).initTransactions();
     }
 
+
     @Test
-    void testReserveStock_Success() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        OrderCreated order = createOrder(orderId);
-        
-        Stock stock = new Stock();
-        stock.setSku("SKU123");
-        stock.setAvailable(20L);
-        stock.setReserved(0L);
+    void testInitializeTransactionsIndirectly_Exception() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("OrderCreated", 0, 0, "key", "value");
 
-        when(stockRepository.findBySku("SKU123")).thenReturn(stock);
+        doThrow(new RuntimeException("fail")).when(kafkaProducer).initTransactions();
 
-        var method = InventoryService.class.getDeclaredMethod("reserveStock", OrderCreated.class);
+        when(kafkaProducer.send(any())).thenReturn(mock(java.util.concurrent.Future.class));
+        doNothing().when(kafkaProducer).beginTransaction();
+        doNothing().when(kafkaProducer).commitTransaction();
+        doNothing().when(kafkaProducer).flush();
+        doNothing().when(kafkaProducer).close();
+
+        Method sendToDLQMethod = InventoryService.class.getDeclaredMethod("sendToDLQ", ConsumerRecord.class, Exception.class);
+        sendToDLQMethod.setAccessible(true);
+
+        ProducerNotInitialisedException exception = assertThrows(
+                ProducerNotInitialisedException.class,
+                () -> {
+                    try {
+                        sendToDLQMethod.invoke(inventoryService, rec, new RuntimeException("test"));
+                    } catch (InvocationTargetException ite) {
+                        throw ite.getCause();
+                    }
+                }
+        );
+
+        assertTrue(exception.getMessage().contains("Failed to initialize transactions"));
+
+        verify(kafkaProducer).initTransactions();
+    }
+
+
+    @Test
+    void testProcessRecordWithRetry_SuccessFirstAttempt() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("OrderCreated", 0, 0L, "key", "value");
+
+        Method method = InventoryService.class.getDeclaredMethod("processRecordWithRetry", ConsumerRecord.class);
         method.setAccessible(true);
 
-        boolean result = (boolean) method.invoke(inventoryService, order);
+        method.invoke(inventoryService, rec);
 
-        assertTrue(result);
-        assertEquals(10, stock.getAvailable());
-        assertEquals(10, stock.getReserved());
-        verify(stockRepository).save(stock);
-        verify(reservationRepository).save(any(Reservation.class));
+        verify(orderProcessorService, times(1)).handleOrder(rec);
+        verify(kafkaConsumer, times(1)).commitAsync();
     }
 
     @Test
-    void testReserveStock_InsufficientStock() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        OrderCreated order = createOrder(orderId);
+    void testProcessRecordWithRetry_RetryThenSuccess() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("OrderCreated", 0, 0L, "key", "value");
 
-        Stock stock = new Stock();
-        stock.setSku("SKU123");
-        stock.setAvailable(1L);
-        stock.setReserved(0L);
-
-        when(stockRepository.findBySku("SKU123")).thenReturn(stock);
-
-        var method = InventoryService.class.getDeclaredMethod("reserveStock", OrderCreated.class);
+        Method method = InventoryService.class.getDeclaredMethod("processRecordWithRetry", ConsumerRecord.class);
         method.setAccessible(true);
 
-        boolean result = (boolean) method.invoke(inventoryService, order);
+        doThrow(new RuntimeException("fail1"))
+                .doThrow(new RuntimeException("fail2"))
+                .doNothing()
+                .when(orderProcessorService).handleOrder(rec);
 
-        assertFalse(result);
-        verify(reservationRepository, never()).save(any());
-        verify(stockRepository, never()).save(any());
+        method.invoke(inventoryService, rec);
+
+        verify(orderProcessorService, times(3)).handleOrder(rec);
+        verify(kafkaConsumer, times(1)).commitAsync();
     }
 
 
-    @Test
-    void testHandleOrder_AlreadyProcessed() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        OrderCreated order = createOrder(orderId);
-
-
-        when(processedEventRepository.existsByEventId(orderId)).thenReturn(true);
-
-        String json = mapper.writeValueAsString(order);
-        var record = TestUtils.createConsumerRecord("OrderCreated", json);
-
-        inventoryService.handleOrder(record);
-
-        verify(outboxRepository, never()).save(any());
-        verify(stockRepository, never()).save(any());
-    }
-
-    @Test
-    void testHandleOrder_ReservationRejected() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        OrderCreated order = createOrder(orderId);
-
-        String json = mapper.writeValueAsString(order);
-        var record = TestUtils.createConsumerRecord("OrderCreated", json);
-
-        when(processedEventRepository.existsByEventId(orderId)).thenReturn(false);
-
-        Stock stock = new Stock();
-        stock.setSku("SKU1");
-        stock.setAvailable(5L);
-        stock.setReserved(0L);
-        when(stockRepository.findBySku("SKU1")).thenReturn(stock);
-
-        inventoryService.handleOrder(record);
-
-        ArgumentCaptor<Outbox> outboxCaptor = ArgumentCaptor.forClass(Outbox.class);
-        verify(outboxRepository).save(outboxCaptor.capture());
-        assertEquals("InventoryRejected", outboxCaptor.getValue().getType());
-    }
-
-    @Test
-    void testHandleOrder_SuccessfulReservation() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        OrderCreated order = createOrder(orderId);
-
-        String json = mapper.writeValueAsString(order);
-
-        var record = TestUtils.createConsumerRecord("OrderCreated", json);
-
-        when(processedEventRepository.existsByEventId(orderId)).thenReturn(false);
-
-        Stock stock = new Stock();
-        stock.setSku("SKU123");
-        stock.setAvailable(20L);
-        stock.setReserved(0L);
-        when(stockRepository.findBySku("SKU123")).thenReturn(stock);
-
-        inventoryService.handleOrder(record);
-
-        ArgumentCaptor<Outbox> outboxCaptor = ArgumentCaptor.forClass(Outbox.class);
-        verify(outboxRepository).save(outboxCaptor.capture());
-        Outbox saved = outboxCaptor.getValue();
-
-        assertEquals("InventoryReserved", saved.getType());
-        verify(processedEventRepository).save(any(ProcessedEvent.class));
-    }
 
     @Test
     void testSendToDLQ_SendsRecordWithErrorHeader() throws Exception {
-        var record = TestUtils.createConsumerRecord("OrderCreated", "{\"id\":\"123\"}");
+        var rec = TestUtils.createConsumerRecord("OrderCreated", "{\"id\":\"123\"}");
 
         var e = new RuntimeException("test-error");
 
         var method = InventoryService.class.getDeclaredMethod("sendToDLQ", org.apache.kafka.clients.consumer.ConsumerRecord.class, Exception.class);
         method.setAccessible(true);
 
-        assertDoesNotThrow(() -> method.invoke(inventoryService, record, e));
+        assertDoesNotThrow(() -> method.invoke(inventoryService, rec, e));
     }
 
+    @Test
+    void testSafelyAbortTransaction_Success() throws Exception {
+        Method method = InventoryService.class.getDeclaredMethod("safelyAbortTransaction");
+        method.setAccessible(true);
+
+        method.invoke(inventoryService);
+
+        verify(kafkaProducer, times(1)).abortTransaction();
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
 }

@@ -23,7 +23,7 @@ spring:
     endpoints:
       web:
         exposure:
-          include: health,info
+          include: "*"
     endpoint:
       health:
         show-components: always

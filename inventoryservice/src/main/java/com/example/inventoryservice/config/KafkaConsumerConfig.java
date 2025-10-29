@@ -19,7 +19,6 @@ public class KafkaConsumerConfig {
     @Qualifier("orderConsumer")
     public KafkaConsumer<String, String> OrderConsumer() {
         Properties props = configLoader.getConsumerProperties();
-        // Optionally, set group.id or other props differently for topic1
         return new KafkaConsumer<>(props);
     }
 

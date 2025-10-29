@@ -1,13 +1,7 @@
 package com.example.orderservice.service;
 
 import com.example.orderservice.config.KafkaConfigLoader;
-import com.example.orderservice.model.Order;
-import com.example.orderservice.model.Outbox;
-import com.example.orderservice.model.ProcessedEvent;
-import com.example.orderservice.repository.OrderRepository;
-import com.example.orderservice.repository.OutboxRepository;
-import com.example.orderservice.repository.ProcessedEventRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -17,19 +11,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
 
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-public class EventListnerTest {
+class EventListnerTest {
 
     @Mock
-    private OrderRepository orderRepository;
-    @Mock
-    private OutboxRepository outboxRepository;
-    @Mock
-    private ProcessedEventRepository processedEventRepository;
+    private EventHandlerService eventHandlerService;
     @Mock
     private KafkaConfigLoader configLoader;
     @Mock
@@ -37,103 +24,57 @@ public class EventListnerTest {
     @Mock
     private KafkaProducer<String, String> producer;
 
-    @InjectMocks
     private EventListner eventListner;
-
-    private ObjectMapper mapper;
 
     @BeforeEach
     void setup() {
         MockitoAnnotations.openMocks(this);
-        mapper = new ObjectMapper();
     }
 
 
-
-
     @Test
-    void testHandleEvent_Idempotent_NoAction() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        Order order = new Order();
-        order.setId(orderId);
-        String payload = mapper.writeValueAsString(order);
+    void testHandleWithRetry_SuccessfulOnFirstAttempt() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("PaymentAuthorized", 0, 0, "key", "value");
 
-        ConsumerRecord<String, String> record =
-                new ConsumerRecord<>("InventoryRejected", 0, 0L, "key", payload);
+        doNothing().when(eventHandlerService).handleEvent(rec);
 
-        when(processedEventRepository.existsById(orderId)).thenReturn(true);
+        // use reflection to access private method
+        var method = EventListner.class.getDeclaredMethod("handleWithRetry", ConsumerRecord.class);
+        method.setAccessible(true);
+        method.invoke(eventListner, rec);
 
-        eventListner.handleEvent(record);
-
-        verify(outboxRepository, never()).save(any());
-        verify(orderRepository, never()).save(any());
-        verify(processedEventRepository, never()).save(any());
+        verify(eventHandlerService, times(1)).handleEvent(rec);
     }
 
-
-
-
     @Test
-    void testHandleEvent_InventoryRejected_CreatesCancelledOutbox() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        Order order = new Order();
-        order.setId(orderId);
-        order.setStatus("NEW");
+    void testHandleWithRetry_FailsThenSucceeds() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("PaymentAuthorized", 0, 0, "key", "value");
 
-        String payload = mapper.writeValueAsString(order);
-        ConsumerRecord<String, String> record =
-                new ConsumerRecord<>("InventoryRejected", 0, 0L, "key", payload);
+        doThrow(new RuntimeException("fail"))
+                .doThrow(new RuntimeException("fail again"))
+                .doNothing()
+                .when(eventHandlerService).handleEvent(rec);
 
-        when(processedEventRepository.existsById(orderId)).thenReturn(false);
+        var method = EventListner.class.getDeclaredMethod("handleWithRetry", ConsumerRecord.class);
+        method.setAccessible(true);
+        method.invoke(eventListner, rec);
 
-        eventListner.handleEvent(record);
-
-        ArgumentCaptor<Outbox> outboxCaptor = ArgumentCaptor.forClass(Outbox.class);
-        verify(outboxRepository).save(outboxCaptor.capture());
-        Outbox savedOutbox = outboxCaptor.getValue();
-
-        assertEquals("OrderCancelled", savedOutbox.getType());
-        assertEquals("PENDING", savedOutbox.getStatus());
-        assertTrue(savedOutbox.getPayload().contains(orderId.toString()));
-
-        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
-        assertEquals("CANCELLED", orderCaptor.getValue().getStatus());
-
-        verify(processedEventRepository).save(any(ProcessedEvent.class));
+        verify(eventHandlerService, times(3)).handleEvent(rec);
     }
 
-
-
-
     @Test
-    void testHandleEvent_PaymentAuthorized_CreatesCompletedOutbox() throws Exception {
-        UUID orderId = UUID.randomUUID();
-        Order order = new Order();
-        order.setId(orderId);
-        order.setStatus("NEW");
+    void testHandleWithRetry_AllRetriesFail_SendsToDLQ() throws Exception {
+        ConsumerRecord<String, String> rec = new ConsumerRecord<>("InventoryRejected", 0, 0, "key", "value");
+        doThrow(new RuntimeException("fail")).when(eventHandlerService).handleEvent(rec);
 
-        String payload = mapper.writeValueAsString(order);
-        ConsumerRecord<String, String> record =
-                new ConsumerRecord<>("PaymentAuthorized", 0, 0L, "key", payload);
+        EventListner spyListener = spy(eventListner);
+        doNothing().when(spyListener).sendToDLQ(any(), any());
 
-        when(processedEventRepository.existsById(orderId)).thenReturn(false);
+        var method = EventListner.class.getDeclaredMethod("handleWithRetry", ConsumerRecord.class);
+        method.setAccessible(true);
+        method.invoke(spyListener, rec);
 
-        eventListner.handleEvent(record);
-
-        ArgumentCaptor<Outbox> outboxCaptor = ArgumentCaptor.forClass(Outbox.class);
-        verify(outboxRepository).save(outboxCaptor.capture());
-        Outbox savedOutbox = outboxCaptor.getValue();
-
-        assertEquals("OrderCompleted", savedOutbox.getType());
-        assertEquals("PENDING", savedOutbox.getStatus());
-        assertTrue(savedOutbox.getPayload().contains(orderId.toString()));
-
-        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
-        assertEquals("COMPLETED", orderCaptor.getValue().getStatus());
-
-        verify(processedEventRepository).save(any(ProcessedEvent.class));
+        verify(spyListener, times(1)).sendToDLQ(any(), any());
     }
 
 }

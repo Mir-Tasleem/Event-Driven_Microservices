@@ -12,4 +12,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleException(JsonProcessingException jsonProcessingException){
         return new ResponseEntity<>(jsonProcessingException.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
     }
+
+    @ExceptionHandler(exception = Exception.class)
+    public ResponseEntity<String> handleException(Exception exception){
+        return new ResponseEntity<>(exception.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+    }
 }
