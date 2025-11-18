@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notificationservice-secret
+  namespace: ecomerce
+stringData:
+  SPRING_DATASOURCE_USERNAME: notification_user
+  SPRING_DATASOURCE_PASSWORD: notification_pass
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notificationservice
+  namespace: ecomerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notificationservice
+  template:
+    metadata:
+      labels:
+        app: notificationservice
+    spec:
+      containers:
+        - name: notificationservice
+          image: notificationservice:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://pg-notification:5432/notification_db
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: notificationservice-secret
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notificationservice-secret
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:29092
+          volumeMounts:
+            - name: notificationservice-pvc
+              mountPath: /data
+      volumes:
+        - name: notificationservice-pvc
+          persistentVolumeClaim:
+            claimName: notificationservice-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notificationservice
+  namespace: ecomerce
+spec:
+  selector:
+    app: notificationservice
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      
+

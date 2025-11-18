@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-order-secret
+  namespace: ecomerce
+stringData:
+  POSTGRES_USER: order_user
+  POSTGRES_PASSWORD: order_pass
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-order-pvc
+  namespace: ecomerce
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-order
+  namespace: ecomerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-order
+  template:
+    metadata:
+      labels:
+        app: pg-order
+    spec:
+      containers:
+        - name: pg-order
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pg-order-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-order-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: pg-order-pvc
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready","-U","order_user"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: pg-order-pvc
+          persistentVolumeClaim:
+            claimName: pg-order-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-order
+  namespace: ecomerce
+spec:
+  selector:
+    app: pg-order
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 5433
+      targetPort: 5432

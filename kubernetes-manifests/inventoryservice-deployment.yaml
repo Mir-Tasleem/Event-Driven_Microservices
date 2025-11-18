@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: inventoryservice-secret
+  namespace: ecomerce
+stringData:
+  SPRING_DATASOURCE_USERNAME: inventory_user
+  SPRING_DATASOURCE_PASSWORD: inventory_pass
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventoryservice
+  namespace: ecomerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventoryservice
+  template:
+    metadata:
+      labels:
+        app: inventoryservice
+    spec:
+      containers:
+        - name: inventoryservice
+          image: inventoryservice:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://pg-inventory:5432/inventory_db
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: inventoryService-secret
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: inventoryservice-secret
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:29092
+          volumeMounts:
+            - name: inventoryservice-pvc
+              mountPath: /data
+      volumes:
+        - name: inventoryservice-pvc
+          persistentVolumeClaim:
+            claimName: inventoryservice-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventoryservice
+  namespace: ecomerce
+spec:
+  selector:
+    app: inventoryservice
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+

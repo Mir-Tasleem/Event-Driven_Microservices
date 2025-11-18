@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-notification-secret
+  namespace: ecomerce
+stringData:
+  POSTGRES_USER: notification_user
+  POSTGRES_PASSWORD: notification_pass
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-notification-pvc
+  namespace: ecomerce
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-notification
+  namespace: ecomerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-notification
+  template:
+    metadata:
+      labels:
+        app: pg-notification
+    spec:
+      containers:
+        - name: pg-notification
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pg-notification-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-notification-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: pg-notification-pvc
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready","-U","notification_user"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: pg-notification-pvc
+          persistentVolumeClaim:
+            claimName: pg-notification-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-notification
+  namespace: ecomerce
+spec:
+  selector:
+    app: pg-notification
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 5436
+      targetPort: 5432

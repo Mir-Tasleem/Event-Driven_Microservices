@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-payment-secret
+  namespace: ecomerce
+stringData:
+  POSTGRES_USER: payment_user
+  POSTGRES_PASSWORD: payment_pass
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-payment-pvc
+  namespace: ecomerce
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg-payment
+  namespace: ecomerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-payment
+  template:
+    metadata:
+      labels:
+        app: pg-payment
+    spec:
+      containers:
+        - name: pg-payment
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pg-payment-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pg-payment-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: pg-payment-pvc
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready","-U","payment_user"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: pg-payment-pvc
+          persistentVolumeClaim:
+            claimName: pg-payment-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg-payment
+  namespace: ecomerce
+spec:
+  selector:
+    app: pg-payment
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 5435
+      targetPort: 5432
